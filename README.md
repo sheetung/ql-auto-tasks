@@ -81,6 +81,8 @@ export WILEY_PROXY="http://127.0.0.1:7890"
 export DD_BOT_TOKEN="your_dingtalk_token"
 export DD_BOT_SECRET="your_dingtalk_secret"
 
+# 钉钉机器人安全设置：选择“自定义关键词”，添加 autoTask
+
 # Bark推送配置（可选，未测试）
 export BARK_PUSH="your_bark_key"
 ```

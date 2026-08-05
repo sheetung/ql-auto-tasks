@@ -40,7 +40,7 @@ class WileyMonitor:
 
     def fetch_cards(self):
         cmd = [
-            "curl", "-s", "--http2",
+            "curl", "-s", "--http2", "-w", "\n__WILEY_HTTP_STATUS__:%{http_code}",
             "-H", "Content-Type: application/json",
             "-H", "Referer: https://authors.wiley.com/dashboard",
             "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
@@ -55,11 +55,70 @@ class WileyMonitor:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
             if result.returncode != 0:
                 return {"error": f"curl failed: {result.stderr}"}
-            return json.loads(result.stdout)
+            body, separator, status_text = result.stdout.rpartition("\n__WILEY_HTTP_STATUS__:")
+            http_status = int(status_text) if separator and status_text.isdigit() else 0
+            if http_status in (401, 403):
+                return {
+                    "error": f"Wiley API returned HTTP {http_status} (cookie expired or invalid)",
+                    "cookie_expired": True,
+                }
+            return json.loads(body if separator else result.stdout)
         except json.JSONDecodeError:
-            return {"error": "API returned non-JSON (cookie may be expired)"}
+            return {
+                "error": "API returned non-JSON (cookie expired or invalid)",
+                "cookie_expired": True,
+            }
         except subprocess.TimeoutExpired:
             return {"error": "Request timeout"}
+
+
+def send_cookie_expired_bark(account_index, error):
+    if not bark_push:
+        return
+
+    payload = json.dumps({
+        "title": "【autoTask】Wiley Cookie 失效",
+        "body": f"账号 {account_index} 的 Wiley Cookie 已失效或无效，请重新获取并更新 WILEY_COOKIES。\n原因：{error}",
+        "icon": bark_icon,
+        "sound": bark_sound,
+        "group": bark_group,
+    }, ensure_ascii=False)
+    cmd = ["curl", "-s", "-X", "POST", bark_push, "-H", "Content-Type: application/json", "-d", payload]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        print("Bark cookie 失效通知发送成功" if result.returncode == 0 else f"Bark cookie 失效通知发送失败: {result.stderr}")
+    except Exception as e:
+        print(f"Bark cookie 失效通知发送失败: {e}")
+
+
+def send_cookie_expired_dingtalk(account_index, error):
+    if not dingtalk_token:
+        return
+
+    title = "【autoTask】Wiley Cookie 失效"
+    data = {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": title,
+            "text": f"## {title}\n\n账号 **{account_index}** 的 Wiley Cookie 已失效或无效，请重新获取并更新 `WILEY_COOKIES`。\n\n原因：{error}",
+        },
+    }
+    if dingtalk_secret:
+        timestamp = str(round(time.time() * 1000))
+        string_to_sign = f"{timestamp}\n{dingtalk_secret}"
+        sign = urllib.parse.quote_plus(base64.b64encode(
+            hmac.new(dingtalk_secret.encode("utf-8"), string_to_sign.encode("utf-8"), hashlib.sha256).digest()
+        ))
+        dingtalk_url = f"https://oapi.dingtalk.com/robot/send?access_token={dingtalk_token}&timestamp={timestamp}&sign={sign}"
+    else:
+        dingtalk_url = f"https://oapi.dingtalk.com/robot/send?access_token={dingtalk_token}"
+
+    cmd = ["curl", "-s", "-X", "POST", dingtalk_url, "-H", "Content-Type: application/json; charset=utf-8", "-d", json.dumps(data, ensure_ascii=False)]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        print("钉钉 cookie 失效通知发送成功" if result.returncode == 0 else f"钉钉 cookie 失效通知发送失败: {result.stderr}")
+    except Exception as e:
+        print(f"钉钉 cookie 失效通知发送失败: {e}")
 
 
 def get_state_file(account_index):
@@ -216,7 +275,7 @@ def send_bark_notification(changes, all_submissions):
         print("无变动，跳过Bark通知")
         return
 
-    title = "【autoCheckin】Wiley论文状态变动"
+    title = "【autoTask】Wiley论文状态变动"
     body_lines = []
     for change in changes:
         body_lines.append(change["detail"])
@@ -247,7 +306,7 @@ def send_dingtalk_notification(changes, all_submissions):
         print("无变动，跳过钉钉通知")
         return
 
-    title = "【autoCheckin】Wiley论文状态变动"
+    title = "【autoTask】Wiley论文状态变动"
     text_lines = [f"## {title}", ""]
 
     for change in changes:
@@ -309,7 +368,14 @@ def main():
 
         if "error" in data:
             print(f"第 {i + 1} 个账号获取数据失败: {data['error']}")
-            all_results.append({"status": "error", "error": data["error"]})
+            if data.get("cookie_expired"):
+                send_cookie_expired_bark(i + 1, data["error"])
+                send_cookie_expired_dingtalk(i + 1, data["error"])
+            all_results.append({
+                "status": "error",
+                "error": data["error"],
+                "cookie_expired": data.get("cookie_expired", False),
+            })
             continue
 
         cards = data.get("content", [])

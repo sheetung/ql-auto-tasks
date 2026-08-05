@@ -236,7 +236,7 @@ def send_bark_notification(results):
         print("未配置Bark推送，跳过通知")
         return
 
-    title = "【autoCheckin】NewAPI签到"
+    title = "【autoTask】NewAPI签到"
     body_lines = []
 
     for idx, (url, result) in enumerate(results, 1):
@@ -285,7 +285,7 @@ def send_dingtalk_notification(results):
         print("未配置钉钉推送，跳过通知")
         return
 
-    title = "【autoCheckin】NewAPI签到"
+    title = "【autoTask】NewAPI签到"
     text_lines = []
     text_lines.append(f"## {title}")
     text_lines.append("")
