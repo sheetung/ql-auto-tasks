@@ -60,6 +60,21 @@ export WILEY_COOKIES="your_wiley_cookie_here"
 
 Cookie 获取方式：登录 https://authors.wiley.com/dashboard 后，F12 打开开发者工具 → Network → 刷新页面 → 点击任意请求 → 复制 Request Headers 中的 Cookie 值。
 
+#### PT 站点签到
+
+已合并爱猫（PTlover）和青蛙两个 PT 站点签到任务，对应脚本为 `ptlover_check.py` 和 `qingw_check.py`。
+
+```bash
+# 爱猫站点，多账号 Cookie 使用 & 分隔
+export PTLOVER_COOKIES="cookie1&cookie2"
+
+# 青蛙站点，多账号 Cookie 使用 & 分隔
+export QINGWA_COOKIES="cookie1&cookie2"
+```
+
+两个任务会复用工程中的 `BARK_PUSH`、`BARK_SOUND`、`DD_BOT_TOKEN` 和 `DD_BOT_SECRET` 通知配置。钉钉机器人安全设置请选择“自定义关键词”，添加 `autoTask`。
+
+
 ### 3. 代理配置（可选）
 
 在青龙面板「配置文件」中设置：
