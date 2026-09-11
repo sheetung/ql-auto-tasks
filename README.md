@@ -4,11 +4,11 @@
 
 > **NewAPI 签到已失效（停止维护）**：面板鉴权与接口变更导致原签到逻辑不可用，脚本 `newapi.py` 仅作存档，请勿再配置 `NEWAPI_*` 环境变量。
 
-[![Stars](https://img.shields.io/github/stars/sheetung/ql-auto-tasks?label=Stars)](https://github.com/sheetung/ql-auto-tasks/stargazers)
-[![Fork](https://img.shields.io/github/forks/sheetung/ql-auto-tasks?label=Fork)](https://github.com/sheetung/ql-auto-tasks/network)
-[![Issue](https://img.shields.io/github/issues/sheetung/ql-auto-tasks?label=Issue)](https://github.com/sheetung/ql-auto-tasks/issues)
-[![visitors](https://visitor-badge.laobi.icu/badge?page_id=sheetung.ql-auto-tasks)](https://github.com/sheetung/ql-auto-tasks)
-[![license](https://img.shields.io/github/license/sheetung/ql-auto-tasks?label=license&color=green)](https://github.com/sheetung/ql-auto-tasks/blob/master/LICENSE)
+[![Stars](https://img.shields.io/github/stars/sheetung/ql-auto-tasks?label=Stars&color=blue&style=flat&logo=)](https://github.com/sheetung/ql-auto-tasks/stargazers)
+[![Fork](https://img.shields.io/github/forks/sheetung/ql-auto-tasks?label=Fork&color=blue&style=flat&logo=)](https://github.com/sheetung/ql-auto-tasks/network)
+[![Issue](https://img.shields.io/github/issues/sheetung/ql-auto-tasks?label=Issue&color=brightgreen&style=flat&logo=)](https://github.com/sheetung/ql-auto-tasks/issues)
+[![visitors](https://visitor-badge.laobi.icu/badge?page_id=sheetung.ql-auto-tasks&color=blue)](https://github.com/sheetung/ql-auto-tasks)
+[![license](https://img.shields.io/github/license/sheetung/ql-auto-tasks?label=license&color=green&style=flat&logo=)](https://github.com/sheetung/ql-auto-tasks/blob/master/LICENSE)
 
 ## 🌟 功能特性
 
