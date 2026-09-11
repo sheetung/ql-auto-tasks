@@ -14,6 +14,8 @@ import base64
 import urllib.parse
 from datetime import datetime
 
+import requests
+
 try:
     from proxy_util import resolve_proxy, apply_to_env
 except ImportError:
@@ -56,6 +58,14 @@ dingtalk_secret = os.environ.get("DD_BOT_SECRET", "")
 wiley_proxy = resolve_proxy("WILEY_PROXY")
 
 STATE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Cookie 失效提醒去重：同一账号 6 小时内不重复推送
+COOKIE_ALERT_INTERVAL_SEC = 6 * 3600
+
+COOKIE_REFRESH_GUIDE = """【如何更新 Cookie】
+1. 浏览器打开并登录 https://authors.wiley.com/dashboard
+2. F12 → Network → 刷新页面 → 点击任意请求
+3. 复制 Request Headers 里的整段 Cookie
+4. 更新青龙环境变量 WILEY_COOKIES（多账号用 & 分隔）"""
 
 
 class WileyMonitor:
@@ -66,8 +76,82 @@ class WileyMonitor:
         self.api_url = "https://authors.wiley.com/dashboard/api/v2/cards"
 
     def fetch_cards(self):
+        try:
+            import requests
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+        except ImportError:
+            return self._fetch_cards_curl()
+
+        session = requests.Session()
+        retry = Retry(total=2, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+        session.mount("https://", HTTPAdapter(max_retries=retry))
+        session.mount("http://", HTTPAdapter(max_retries=retry))
+        session.headers.update({
+            "Content-Type": "application/json",
+            "Referer": "https://authors.wiley.com/dashboard",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/148.0.0.0 Safari/537.36"
+            ),
+            "Cookie": self.cookie,
+            "Accept": "application/json",
+        })
+        proxies = {}
+        if wiley_proxy:
+            proxies = {"http": wiley_proxy, "https": wiley_proxy}
+
+        try:
+            resp = session.get(
+                self.api_url,
+                timeout=30,
+                allow_redirects=True,
+                proxies=proxies or None,
+            )
+        except requests.Timeout:
+            return {"error": "Request timeout", "cookie_expired": False}
+        except requests.RequestException as e:
+            return {"error": f"Network error: {e}", "cookie_expired": False}
+
+        final_url = str(resp.url or "")
+        content_type = (resp.headers.get("Content-Type") or "").lower()
+        body_head = (resp.text or "")[:400].lower()
+
+        # 登录失效常见表现：跳到 /dashboard/error、返回 HTML、401/403
+        if resp.status_code in (401, 403):
+            return {
+                "error": f"HTTP {resp.status_code}（Cookie 失效或无权限）",
+                "cookie_expired": True,
+            }
+        if "/dashboard/error" in final_url or "/login" in final_url:
+            return {
+                "error": "已跳转到登录/错误页（Cookie 失效）",
+                "cookie_expired": True,
+            }
+        if "text/html" in content_type or body_head.startswith("<!doctype") or body_head.startswith("<html"):
+            return {
+                "error": "接口返回 HTML 而非 JSON（Cookie 失效或被拦截）",
+                "cookie_expired": True,
+            }
+        if resp.status_code >= 400:
+            return {
+                "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
+                "cookie_expired": False,
+            }
+
+        try:
+            return resp.json()
+        except ValueError:
+            return {
+                "error": "响应不是合法 JSON（多半是 Cookie 失效）",
+                "cookie_expired": True,
+            }
+
+    def _fetch_cards_curl(self):
         cmd = [
-            "curl", "-s", "--http2", "-w", "\n__WILEY_HTTP_STATUS__:%{http_code}",
+            "curl", "-s", "--http2", "-L",
+            "-w", "\n__WILEY_HTTP_STATUS__:%{http_code}\n__WILEY_URL__:%{url_effective}",
             "-H", "Content-Type: application/json",
             "-H", "Referer: https://authors.wiley.com/dashboard",
             "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
@@ -80,54 +164,127 @@ class WileyMonitor:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
             if result.returncode != 0:
-                return {"error": f"curl failed: {result.stderr}"}
-            body, separator, status_text = result.stdout.rpartition("\n__WILEY_HTTP_STATUS__:")
-            http_status = int(status_text) if separator and status_text.isdigit() else 0
+                return {"error": f"curl failed: {result.stderr}", "cookie_expired": False}
+
+            stdout = result.stdout or ""
+            http_status = 0
+            final_url = ""
+            body = stdout
+            if "\n__WILEY_URL__:" in stdout:
+                body, _, url_part = stdout.rpartition("\n__WILEY_URL__:")
+                final_url = url_part.strip()
+            if "\n__WILEY_HTTP_STATUS__:" in body:
+                body, _, status_text = body.rpartition("\n__WILEY_HTTP_STATUS__:")
+                if status_text.strip().isdigit():
+                    http_status = int(status_text.strip())
+
+            body_head = (body or "")[:400].lower()
             if http_status in (401, 403):
                 return {
-                    "error": f"Wiley API returned HTTP {http_status} (cookie expired or invalid)",
+                    "error": f"HTTP {http_status}（Cookie 失效或无权限）",
                     "cookie_expired": True,
                 }
-            return json.loads(body if separator else result.stdout)
-        except json.JSONDecodeError:
-            return {
-                "error": "API returned non-JSON (cookie expired or invalid)",
-                "cookie_expired": True,
-            }
+            if "/dashboard/error" in final_url or "/login" in final_url:
+                return {
+                    "error": "已跳转到登录/错误页（Cookie 失效）",
+                    "cookie_expired": True,
+                }
+            if body_head.startswith("<!doctype") or body_head.startswith("<html"):
+                return {
+                    "error": "接口返回 HTML 而非 JSON（Cookie 失效或被拦截）",
+                    "cookie_expired": True,
+                }
+            try:
+                return json.loads(body)
+            except json.JSONDecodeError:
+                return {
+                    "error": "响应不是合法 JSON（多半是 Cookie 失效）",
+                    "cookie_expired": True,
+                }
         except subprocess.TimeoutExpired:
-            return {"error": "Request timeout"}
+            return {"error": "Request timeout", "cookie_expired": False}
+
+
+def _cookie_alert_path(account_index):
+    return os.path.join(STATE_DIR, f"wiley_cookie_alert_{account_index}.json")
+
+
+def should_notify_cookie_expired(account_index):
+    """去重：距上次失效提醒不足 N 小时则跳过。"""
+    path = _cookie_alert_path(account_index)
+    now = time.time()
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            last = float(data.get("last_notified_at", 0))
+            if now - last < COOKIE_ALERT_INTERVAL_SEC:
+                return False
+        except (ValueError, OSError, json.JSONDecodeError):
+            pass
+    return True
+
+
+def mark_cookie_alerted(account_index):
+    path = _cookie_alert_path(account_index)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"last_notified_at": time.time()}, f)
+
+
+def clear_cookie_alert(account_index):
+    path = _cookie_alert_path(account_index)
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def send_cookie_expired_bark(account_index, error):
     if not bark_push:
+        print("未配置 Bark，跳过 Cookie 失效推送")
         return
 
-    payload = json.dumps({
-        "title": "【autoTask】Wiley Cookie 失效",
-        "body": f"账号 {account_index} 的 Wiley Cookie 已失效或无效，请重新获取并更新 WILEY_COOKIES。\n原因：{error}",
+    body = (
+        f"账号 {account_index} Wiley Cookie 已失效，请立即更新 WILEY_COOKIES。\n\n"
+        f"原因：{error}\n\n"
+        f"{COOKIE_REFRESH_GUIDE}"
+    )
+    payload = {
+        "title": "【autoTask】Wiley Cookie 失效，请更新",
+        "body": body,
         "icon": bark_icon,
-        "sound": bark_sound,
+        "sound": bark_sound or "alarm",
         "group": bark_group,
-    }, ensure_ascii=False)
-    cmd = ["curl", "-s", "-X", "POST", bark_push, "-H", "Content-Type: application/json", "-d", payload]
+        "level": "timeSensitive",
+    }
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        print("Bark cookie 失效通知发送成功" if result.returncode == 0 else f"Bark cookie 失效通知发送失败: {result.stderr}")
+        resp = requests.post(bark_push, json=payload, timeout=10)
+        resp.raise_for_status()
+        print("✅ Bark Cookie 失效提醒已发送")
     except Exception as e:
-        print(f"Bark cookie 失效通知发送失败: {e}")
+        print(f"❌ Bark Cookie 失效提醒失败: {e}")
 
 
 def send_cookie_expired_dingtalk(account_index, error):
     if not dingtalk_token:
+        print("未配置钉钉，跳过 Cookie 失效推送")
         return
 
-    title = "【autoTask】Wiley Cookie 失效"
+    title = "【autoTask】Wiley Cookie 失效，请更新"
+    text = (
+        f"## {title}\n\n"
+        f"账号 **{account_index}** 的 Wiley Cookie 已失效，请立即更新 `WILEY_COOKIES`。\n\n"
+        f"**原因**：{error}\n\n"
+        f"### 更新步骤\n"
+        f"1. 登录 https://authors.wiley.com/dashboard\n"
+        f"2. F12 → Network → 刷新 → 复制请求头 Cookie\n"
+        f"3. 更新青龙环境变量 `WILEY_COOKIES`\n\n"
+        f"> 6 小时内不会重复提醒；恢复后会自动继续监控。"
+    )
     data = {
         "msgtype": "markdown",
-        "markdown": {
-            "title": title,
-            "text": f"## {title}\n\n账号 **{account_index}** 的 Wiley Cookie 已失效或无效，请重新获取并更新 `WILEY_COOKIES`。\n\n原因：{error}",
-        },
+        "markdown": {"title": title, "text": text},
     }
     if dingtalk_secret:
         timestamp = str(round(time.time() * 1000))
@@ -139,12 +296,24 @@ def send_cookie_expired_dingtalk(account_index, error):
     else:
         dingtalk_url = f"https://oapi.dingtalk.com/robot/send?access_token={dingtalk_token}"
 
-    cmd = ["curl", "-s", "-X", "POST", dingtalk_url, "-H", "Content-Type: application/json; charset=utf-8", "-d", json.dumps(data, ensure_ascii=False)]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        print("钉钉 cookie 失效通知发送成功" if result.returncode == 0 else f"钉钉 cookie 失效通知发送失败: {result.stderr}")
+        resp = requests.post(dingtalk_url, json=data, timeout=10)
+        resp.raise_for_status()
+        print("✅ 钉钉 Cookie 失效提醒已发送")
     except Exception as e:
-        print(f"钉钉 cookie 失效通知发送失败: {e}")
+        print(f"❌ 钉钉 Cookie 失效提醒失败: {e}")
+
+
+def notify_cookie_expired(account_index, error):
+    """检测到 Cookie 失效时立刻推送（带去重）。"""
+    if not should_notify_cookie_expired(account_index):
+        print(f"账号 {account_index} 失效提醒已发过（{COOKIE_ALERT_INTERVAL_SEC // 3600}h 内不重复）")
+        return False
+    print(f"🚨 账号 {account_index} Cookie 失效，立即推送提醒")
+    send_cookie_expired_bark(account_index, error)
+    send_cookie_expired_dingtalk(account_index, error)
+    mark_cookie_alerted(account_index)
+    return True
 
 
 def get_state_file(account_index):
@@ -395,8 +564,7 @@ def main():
         if "error" in data:
             print(f"第 {i + 1} 个账号获取数据失败: {data['error']}")
             if data.get("cookie_expired"):
-                send_cookie_expired_bark(i + 1, data["error"])
-                send_cookie_expired_dingtalk(i + 1, data["error"])
+                notify_cookie_expired(i + 1, data["error"])
             all_results.append({
                 "status": "error",
                 "error": data["error"],
@@ -404,7 +572,12 @@ def main():
             })
             continue
 
+        # Cookie 恢复：清除失效提醒标记
+        clear_cookie_alert(i + 1)
+
         cards = data.get("content", [])
+        if not isinstance(cards, list):
+            cards = []
         print(f"获取到 {len(cards)} 篇投稿")
 
         # 加载旧状态（按账号分开存储）

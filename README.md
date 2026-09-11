@@ -198,6 +198,8 @@ Cookie 获取：登录 dashboard 后 F12 → Network → 刷新 → 任选请求
 
 若日志出现 HTTP 401/403、non-JSON 或跳转 `/dashboard/error`，通常是 Cookie 过期或代理不可达。
 
+Cookie 失效时会**立刻**通过 Bark/钉钉推送提醒，并附更新步骤；同一账号 **6 小时内不重复提醒**。Cookie 恢复后自动继续监控。
+
 **运行示例**
 
 ```text
