@@ -84,15 +84,15 @@ class QingwaClient:
             current_match = re.search(r'本次签到获得\s*<b>\s*(\d+)\s*</b>\s*个蝌蚪', html)
             current_bonus = int(current_match.group(1)) if current_match else 0
 
-            # 总蝌蚪数量（保留原始格式，不转换为浮点数）
-            total_bonus = "0.0"  # 默认值改为字符串类型
+            # 总蝌蚪数量
+            total_bonus = 0.0
             bonus_font = soup.find('font', class_='color_bonus', string=lambda text: text and '蝌蚪' in text)
             if bonus_font:
                 parent_html = str(bonus_font.parent)
                 # 匹配包含逗号和小数点的数值（如 "2,058.0"）
                 total_match = re.search(r'蝌蚪.*?:\s*([\d,.]+)', parent_html)
                 if total_match:
-                    total_bonus = total_match.group(1)  # 直接使用原始匹配结果（保留逗号）
+                    total_bonus = float(total_match.group(1).replace(',', ''))
                 
             # 每日排名
             rank_match = re.search(r'今日签到排名：\s*<b>\s*(\d+)\s*</b>\s*/\s*<b>\s*(\d+)\s*</b>', html)

@@ -5,16 +5,19 @@ name: NewAPI签到
 cron: 0 0 * * *
 """
 import os
+import json
 import requests
 import time
 import hmac
 import hashlib
 import base64
 import urllib.parse
+import re
 from datetime import datetime
 
 # 添加bark推送
-bark_push = "https://api.day.app/{key}" #(自建推送的自行替换整段url，非自建只需替换key即可)
+bark_push = os.environ.get("BARK_PUSH", "")
+bark_push = f"https://api.day.app/{bark_push}" if bark_push and not bark_push.startswith("http") else bark_push
 bark_group = "NewAPI"
 bark_icon = "https://staticres.ablesci.com/apple-touch-icon.png"
 bark_sound = os.environ.get("BARK_SOUND", "")
@@ -26,19 +29,108 @@ dingtalk_secret = os.environ.get("DD_BOT_SECRET", "")
 class NewAPI:
     name = "NewAPI签到"
 
-    def __init__(self, url, cookie, user_id="2"):
+    def __init__(self, url, credential, session=None):
         self.url = url.rstrip('/')
-        self.cookie = cookie
-        
-        # 从cookie中提取用户ID（如果存在）
-        if "user_id=" in cookie:
-            self.user_id = cookie.split("user_id=")[1].split("&")[0]
-        elif "userid=" in cookie:
-            self.user_id = cookie.split("userid=")[1].split("&")[0]
-        elif "uid=" in cookie:
-            self.user_id = cookie.split("uid=")[1].split("&")[0]
+        self.credential = credential.strip()
+        self.session = session or requests.Session()
+
+    @staticmethod
+    def _is_success_response(data):
+        """兼容不同 NewAPI 版本的签到返回格式。"""
+        if not isinstance(data, dict):
+            return False
+
+        message = str(data.get("message", data.get("msg", "")))
+        message_lower = message.lower()
+        already_checked_keywords = ("已经签到", "已签到", "重复签到", "already checked", "already signed")
+        success_keywords = ("签到成功", "check-in successful", "success")
+
+        if any(keyword in message_lower for keyword in already_checked_keywords):
+            return True
+        if data.get("success") is True or data.get("ret") == 1 or data.get("code") == 0:
+            return True
+        return any(keyword in message_lower for keyword in success_keywords)
+
+    @staticmethod
+    def _response_message(data):
+        if isinstance(data, dict):
+            return str(data.get("message", data.get("msg", data.get("error", "未知错误"))))
+        return "响应格式错误"
+
+    @staticmethod
+    def _decode_jwt_payload(token):
+        """仅解析 JWT 元数据用于提示，不验证也不输出凭证。"""
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        try:
+            payload = parts[1] + "=" * (-len(parts[1]) % 4)
+            return json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            return None
+
+    def _credential_config(self):
+        """生成新版面板 PAT 鉴权配置。"""
+        credential = self.credential
+        lowered = credential.lower()
+
+        if lowered.startswith("cookie:") or lowered.startswith("cookie=") or "session=" in lowered:
+            return (
+                "cookie",
+                {},
+                "新版 New API 已不支持旧 session Cookie，请改用个人设置中的面板访问令牌 PAT",
+            )
+
+        if lowered.startswith("authorization:") or lowered.startswith("authorization="):
+            value = credential.split(credential[13], 1)[1].strip()
+        elif lowered.startswith("pat:") or lowered.startswith("pat="):
+            value = credential[4:].strip()
+        elif lowered.startswith("bearer "):
+            value = credential
         else:
-            self.user_id = user_id
+            value = credential
+
+        if not value:
+            return "pat", {}, "认证凭据为空"
+
+        token = value[7:].strip() if value.lower().startswith("bearer ") else value
+        jwt_payload = self._decode_jwt_payload(token)
+        if jwt_payload and jwt_payload.get("token_use") == "access":
+            exp = jwt_payload.get("exp")
+            expiry = ""
+            if isinstance(exp, (int, float)):
+                expiry = datetime.fromtimestamp(exp).strftime("%Y-%m-%d %H:%M:%S")
+                expiry = f"（到期时间 {expiry}）"
+            return (
+                "browser_access_token",
+                {},
+                "检测到浏览器短期 Access Token"
+                f"{expiry}，它通常仅有效 15 分钟，不能用于定时任务；"
+                "请改用个人设置中的面板访问令牌 PAT（User.AccessToken）",
+            )
+
+        return "pat", {"Authorization": f"Bearer {token}"}, None
+
+    @staticmethod
+    def _is_cloudflare_page(response):
+        content_type = response.headers.get("Content-Type", "").lower()
+        text = response.text.lower()
+        return "text/html" in content_type and (
+            "just a moment" in text
+            or "cf-chl-" in text
+            or "challenge-platform" in text
+        )
+
+    @classmethod
+    def _read_json(cls, response):
+        if cls._is_cloudflare_page(response):
+            raise RuntimeError("遇到 Cloudflare 人机验证，请先在浏览器完成验证")
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise RuntimeError(
+                f"服务端返回非 JSON 内容（HTTP {response.status_code}）"
+            ) from exc
 
     def sign(self):
         # 签到URL，根据NewAPI站点的实际签到接口调整
@@ -50,8 +142,10 @@ class NewAPI:
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "Accept-Encoding": "gzip, deflate, br",
             "Accept-Language": "zh-CN,zh;q=0.9",
+            "Content-Type": "application/json",
             "DNT": "1",
             "Referer": f"{self.url}/",
+            "Origin": self.url,
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
@@ -59,95 +153,89 @@ class NewAPI:
             "X-Requested-With": "XMLHttpRequest"
         }
         
-        # 读取代理环境变量
-        proxies = {}
-        newapi_proxy = os.environ.get("NEWAPI_PROXY") or os.environ.get("newapi_proxy")
-        
-        if newapi_proxy:
-            proxies["http"] = newapi_proxy
-            proxies["https"] = newapi_proxy
-        
+        # 读取代理：NEWAPI_PROXY > AUTO_TASK_PROXY > 系统 https_proxy
+        try:
+            from proxy_util import resolve_proxy, requests_proxies
+        except ImportError:
+            def resolve_proxy(*names, use_unified=True, use_system=True):
+                for name in names:
+                    v = os.environ.get(name) or os.environ.get(name.lower())
+                    if v:
+                        return v.strip()
+                if use_unified:
+                    v = os.environ.get("AUTO_TASK_PROXY") or os.environ.get("auto_task_proxy")
+                    if v:
+                        return v.strip()
+                if use_system:
+                    for key in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
+                        v = os.environ.get(key)
+                        if v:
+                            return v.strip()
+                return ""
+
+            def requests_proxies(proxy_url):
+                if not proxy_url:
+                    return {}
+                return {"http": proxy_url, "https": proxy_url}
+
+        proxies = requests_proxies(resolve_proxy("NEWAPI_PROXY"))
+
         if proxies:
             print(f"使用代理: {proxies}")
         
-        # 尝试不同的认证方式
-        auth_attempts = []
-        
-        # 尝试: 使用session cookie认证
-        if "session=" in self.cookie:
-            auth_attempts.append({
-                "name": "session cookie",
-                "headers": dict(base_headers, **{
-                    "Cookie": self.cookie,
-                    "New-Api-User": self.user_id
-                })
-            })
-        
-        # 尝试: 默认使用cookie认证
-        auth_attempts.append({
-            "name": "default cookie",
-            "headers": dict(base_headers, **{
-                "Cookie": self.cookie
-            })
-        })
-        
-        # 尝试每种认证方式
-        for attempt in auth_attempts:
-            print(f"尝试认证方式: {attempt['name']}")
-            try:
-                # 尝试使用POST请求进行签到
-                response = requests.post(sign_url, headers=attempt['headers'], proxies=proxies)
-                
-                # 处理响应
-                if response.status_code == 200:
-                    # 检查是否是Cloudflare验证页面
-                    if '<title>Just a moment...</title>' in response.text or 'cloudflare' in response.text.lower():
-                        print(f"认证方式 {attempt['name']} 遇到Cloudflare验证")
-                        return {"status": "error", "message": "签到失败: 遇到Cloudflare人机验证，请手动访问站点完成验证后再尝试"}
-                    
-                    try:
-                        result = response.json()
-                        
-                        # 无论是签到成功还是今日已签到，都尽量继续拉取详情统计
-                        detail_response = requests.get(sign_url, headers=attempt['headers'], proxies=proxies)
-                        if detail_response.status_code == 200:
-                            # 检查详细信息是否是Cloudflare验证页面
-                            if '<title>Just a moment...</title>' in detail_response.text or 'cloudflare' in detail_response.text.lower():
-                                print("获取详细信息时遇到Cloudflare验证")
-                            else:
-                                try:
-                                    detail_result = detail_response.json()
-                                    result['detail'] = detail_result
-                                except:
-                                    pass
+        auth_type, credential_headers, credential_error = self._credential_config()
+        if credential_error:
+            return {"status": "error", "message": f"签到失败: {credential_error}"}
 
-                        return {"status": "success", "message": "签到成功", "data": result}
-                    except ValueError:
-                        # 响应不是JSON格式，可能是Cloudflare验证页面
-                        if '<title>Just a moment...</title>' in response.text or 'cloudflare' in response.text.lower():
-                            print(f"认证方式 {attempt['name']} 遇到Cloudflare验证")
-                            return {"status": "error", "message": "签到失败: 遇到Cloudflare人机验证，请手动访问站点完成验证后再尝试"}
-                        else:
-                            print(f"认证方式 {attempt['name']} 响应不是JSON格式: {response.text[:100]}...")
-                            return {"status": "error", "message": "签到失败: 响应格式错误"}
-                elif response.status_code == 403:
-                    # 403错误可能是Cloudflare验证
-                    if '<title>Just a moment...</title>' in response.text or 'cloudflare' in response.text.lower():
-                        print(f"认证方式 {attempt['name']} 遇到Cloudflare验证")
-                        return {"status": "error", "message": "签到失败: 遇到Cloudflare人机验证，请手动访问站点完成验证后再尝试"}
-                    else:
-                        print(f"认证方式 {attempt['name']} 失败: {response.status_code}")
-                else:
-                    print(f"认证方式 {attempt['name']} 失败: {response.status_code}")
-            except requests.exceptions.RequestException as e:
-                print(f"认证方式 {attempt['name']} 异常: {str(e)}")
-        
-        # 所有认证方式都失败
-        return {"status": "error", "message": "签到失败: 所有认证方式都失败，可能需要有效的access token"}
+        headers = dict(base_headers, **credential_headers)
+        print("尝试认证方式: 面板 PAT")
+
+        try:
+            response = self.session.post(
+                sign_url, headers=headers, proxies=proxies, timeout=30
+            )
+            result = self._read_json(response)
+
+            if not 200 <= response.status_code < 300:
+                message = self._response_message(result)
+                return {
+                    "status": "error",
+                    "message": f"签到失败: HTTP {response.status_code}: {message}",
+                }
+
+            if not self._is_success_response(result):
+                message = self._response_message(result)
+                code = result.get("code") if isinstance(result, dict) else None
+                suffix = f" [{code}]" if code else ""
+                return {"status": "error", "message": f"签到失败: {message}{suffix}"}
+
+            # 签到成功或今日已签到后，尽量拉取当月统计；失败不影响签到结果。
+            try:
+                detail_response = self.session.get(
+                    sign_url, headers=headers, proxies=proxies, timeout=30
+                )
+                if 200 <= detail_response.status_code < 300:
+                    detail_result = self._read_json(detail_response)
+                    if isinstance(detail_result, dict):
+                        result["detail"] = detail_result
+            except (requests.exceptions.RequestException, RuntimeError) as exc:
+                print(f"获取签到详情失败: {exc}")
+
+            return {"status": "success", "message": "签到成功", "data": result}
+        except requests.exceptions.RequestException as exc:
+            return {"status": "error", "message": f"签到失败: 网络请求异常: {exc}"}
+        except RuntimeError as exc:
+            return {"status": "error", "message": f"签到失败: {exc}"}
 
     def main(self):
         print(f"正在签到站点: {self.url}")
-        print(f"使用 Cookie: {self.cookie[:20]}...")
+        auth_type, _, _ = self._credential_config()
+        credential_type = {
+            "pat": "面板 PAT",
+            "cookie": "旧版 Cookie（不支持）",
+            "browser_access_token": "浏览器短期 Access Token（不可用于定时任务）",
+        }.get(auth_type, "未知")
+        print(f"使用认证方式: {credential_type}")
         result = self.sign()
 
         if result.get('data'):
@@ -195,6 +283,8 @@ def parse_sign_details(result):
 
     data = result.get('data', {})
     details['msg'] = data.get('message', '签到成功')
+    checkin_data = data.get('data', {}) if isinstance(data.get('data'), dict) else {}
+    details['today_quota'] = checkin_data.get('quota_awarded') or 0
     message = str(details['msg'])
     details['is_already_checked'] = (
         data.get('success') is False or
@@ -221,7 +311,7 @@ def parse_sign_details(result):
             )
             latest_record = valid_records[0]
             current_record = today_record or latest_record
-            details['today_quota'] = current_record.get('quota_awarded') or 0
+            details['today_quota'] = current_record.get('quota_awarded') or details['today_quota']
         else:
             details['total_checkins'] = stats.get('total_checkins', 0)
 
@@ -229,6 +319,58 @@ def parse_sign_details(result):
             details['is_already_checked'] = True
 
     return details
+
+
+def load_newapi_accounts(env=None):
+    """读取账号配置；JSON 格式优先，并兼容旧的 @/& 格式。"""
+    env = os.environ if env is None else env
+    json_value = env.get("NEWAPI_ACCOUNTS_JSON", "").strip()
+    if json_value:
+        try:
+            raw_accounts = json.loads(json_value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"NEWAPI_ACCOUNTS_JSON 不是合法 JSON: {exc}") from exc
+        if not isinstance(raw_accounts, list):
+            raise ValueError("NEWAPI_ACCOUNTS_JSON 顶层必须是数组")
+
+        accounts = []
+        for index, item in enumerate(raw_accounts, 1):
+            if not isinstance(item, dict):
+                raise ValueError(f"NEWAPI_ACCOUNTS_JSON 第 {index} 项必须是对象")
+            url = str(item.get("url", "")).strip()
+            credential = str(
+                item.get("pat")
+                or item.get("credential")
+                or item.get("token")
+                or ""
+            ).strip()
+            if not url or not credential:
+                raise ValueError(f"NEWAPI_ACCOUNTS_JSON 第 {index} 项缺少 url 或 pat/credential")
+            accounts.append({
+                "url": url,
+                "credential": credential,
+            })
+        return accounts
+
+    legacy_value = env.get("NEWAPI_ACCOUNTS", "").strip()
+    if not legacy_value:
+        return []
+
+    # 仅在下一个 http(s) 账号开始处切分，PAT 内即使含有 & 也不会被误拆。
+    entries = re.split(r"&(?=https?://)", legacy_value)
+    accounts = []
+    for index, entry in enumerate(entries, 1):
+        parts = entry.split("@", 1)
+        if len(parts) != 2:
+            raise ValueError(f"NEWAPI_ACCOUNTS 第 {index} 项格式错误，应为 url@PAT")
+        url, credential = parts
+        if not url.strip() or not credential.strip():
+            raise ValueError(f"NEWAPI_ACCOUNTS 第 {index} 项缺少 URL 或凭据")
+        accounts.append({
+            "url": url.strip(),
+            "credential": credential.strip(),
+        })
+    return accounts
 
 
 def send_bark_notification(results):
@@ -364,48 +506,26 @@ def send_dingtalk_notification(results):
         print(f"❌ 钉钉推送失败: {str(e)}")
 
 def main():
-    # 读取环境变量 NEWAPI_ACCOUNTS，格式为 url@userid@cookie&url@userid@cookie
-    accounts = os.getenv("NEWAPI_ACCOUNTS")
-    if not accounts:
-        print("未找到环境变量 NEWAPI_ACCOUNTS，请检查配置")
+    try:
+        accounts = load_newapi_accounts()
+    except ValueError as exc:
+        print(f"NewAPI 账号配置错误: {exc}")
         return
 
-    # 解析账号列表
-    # 注意：需要正确处理cookie中包含&的情况
-    account_list = []
-    current_account = ""
-    at_count = 0
-    
-    for char in accounts:
-        if char == "@":
-            at_count += 1
-            current_account += char
-        elif char == "&" and at_count >= 2:
-            account_list.append(current_account)
-            current_account = ""
-            at_count = 0
-        else:
-            current_account += char
-    
-    if current_account:
-        account_list.append(current_account)
+    if not accounts:
+        print("未找到 NEWAPI_ACCOUNTS_JSON 或 NEWAPI_ACCOUNTS，请检查配置")
+        return
     
     results = []
     
-    for i, account in enumerate(account_list):
+    for i, account in enumerate(accounts):
         print(f"正在签到第 {i + 1} 个站点...")
         try:
-            # 解析 url@userid@cookie 格式
-            parts = account.split("@")
-            if len(parts) == 3:
-                url, user_id, cookie = parts
-            else:
-                # 兼容旧格式 url@cookie
-                url, cookie = parts
-                user_id = "2"  # 默认为用户ID 2
-            
-            # 使用正确的路径进行签到
-            result = NewAPI(url, cookie, user_id).main()
+            url = account["url"]
+            result = NewAPI(
+                url,
+                account["credential"],
+            ).main()
             results.append((url, result))
         except Exception as e:
             results.append(("", {"status": "error", "message": f"第 {i + 1} 个站点签到失败: {str(e)}"}))

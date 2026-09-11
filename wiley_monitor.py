@@ -14,6 +14,33 @@ import base64
 import urllib.parse
 from datetime import datetime
 
+try:
+    from proxy_util import resolve_proxy, apply_to_env
+except ImportError:
+    def resolve_proxy(*names, use_unified=True, use_system=True):
+        for name in names:
+            v = os.environ.get(name) or os.environ.get(name.lower())
+            if v:
+                return v.strip()
+        if use_unified:
+            v = os.environ.get("AUTO_TASK_PROXY") or os.environ.get("auto_task_proxy")
+            if v:
+                return v.strip()
+        if use_system:
+            for key in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
+                v = os.environ.get(key)
+                if v:
+                    return v.strip()
+        return ""
+
+    def apply_to_env(env, proxy_url):
+        if not proxy_url:
+            return env
+        env = dict(env)
+        env["http_proxy"] = env["https_proxy"] = proxy_url
+        env["HTTP_PROXY"] = env["HTTPS_PROXY"] = proxy_url
+        return env
+
 # 添加bark推送
 bark_push = os.environ.get("BARK_PUSH", "")  # 填入你的 bark key 或完整 URL
 bark_push = f"https://api.day.app/{bark_push}" if bark_push and not bark_push.startswith("http") else bark_push
@@ -25,8 +52,8 @@ bark_sound = os.environ.get("BARK_SOUND", "")
 dingtalk_token = os.environ.get("DD_BOT_TOKEN", "")
 dingtalk_secret = os.environ.get("DD_BOT_SECRET", "")
 
-# 代理配置
-wiley_proxy = os.environ.get("WILEY_PROXY") or os.environ.get("wiley_proxy") or os.environ.get("https_proxy") or ""
+# 代理：WILEY_PROXY > AUTO_TASK_PROXY > 系统 https_proxy
+wiley_proxy = resolve_proxy("WILEY_PROXY")
 
 STATE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -49,8 +76,7 @@ class WileyMonitor:
         ]
         env = os.environ.copy()
         if wiley_proxy:
-            env["https_proxy"] = wiley_proxy
-            env["HTTPS_PROXY"] = wiley_proxy
+            env = apply_to_env(env, wiley_proxy)
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
             if result.returncode != 0:

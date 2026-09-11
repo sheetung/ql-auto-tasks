@@ -33,11 +33,23 @@ bark_sound = os.environ.get("BARK_SOUND", "")
 dingtalk_token = os.environ.get("DD_BOT_TOKEN", "")
 dingtalk_secret = os.environ.get("DD_BOT_SECRET", "")
 
-huawei_proxy = (
-    os.environ.get("HUAWEI_PROXY")
-    or os.environ.get("huawei_proxy")
-    or ""
-)
+# 华为官网国内可直连，默认不走统一代理；仅在显式设置 HUAWEI_PROXY 时使用
+try:
+    from proxy_util import resolve_proxy, requests_proxies
+except ImportError:
+    def resolve_proxy(*names, use_unified=True, use_system=True):
+        for name in names:
+            v = os.environ.get(name) or os.environ.get(name.lower())
+            if v:
+                return v.strip()
+        return ""
+
+    def requests_proxies(proxy_url):
+        if not proxy_url:
+            return {}
+        return {"http": proxy_url, "https": proxy_url}
+
+huawei_proxy = resolve_proxy("HUAWEI_PROXY", use_unified=False, use_system=False)
 
 SITEMAP_XML = "https://consumer.huawei.com/cn/sitemap.xml"
 SITEMAP_HTML = "https://consumer.huawei.com/cn/sitemap/"
@@ -82,8 +94,9 @@ def make_session():
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     session.headers.update(HEADERS)
-    if huawei_proxy:
-        session.proxies = {"http": huawei_proxy, "https": huawei_proxy}
+    proxies = requests_proxies(huawei_proxy)
+    if proxies:
+        session.proxies.update(proxies)
     return session
 
 

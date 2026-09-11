@@ -1,23 +1,22 @@
 # 青龙自动签到 & 状态监控脚本
 
-基于青龙面板的自动签到与状态监控工具，支持科研通、NewAPI签到、Wiley论文投稿状态监控和华为官网新机监控，支持多账号/多站点管理、推送通知和异常处理。
+基于青龙面板的自动签到与状态监控工具，支持科研通签到、Wiley论文投稿状态监控和华为官网新机监控，支持多账号管理、推送通知和异常处理。
+
+> **NewAPI 签到已失效（停止维护）**：面板鉴权与接口变更导致原签到逻辑不可用，脚本 `newapi.py` 仅作存档，请勿再配置 `NEWAPI_*` 环境变量。
 
 ![image](https://img.shields.io/github/stars/sheetung/autoCheckin) | ![image](https://img.shields.io/github/forks/sheetung/autoCheckin) | ![image](https://img.shields.io/github/issues/sheetung/autoCheckin)
 
 ## 🌟 功能特性
 
-1. **多账号/多站点管理**：
+1. **多账号管理**：
    - 科研通：支持多个账号同时签到
-   - NewAPI：支持多个站点同时签到
    - Wiley：支持多账号论文投稿状态监控（检测状态变更、新通知等）
-2. **华为新机监控**：定时抓取华为中国站 sitemap，对比本地基线，发现新发布/下架手机型号时推送通知
+2. **华为新机监控**：三层信号监控官网新机（发布会活动页 / 热门产品位 / 产品页上架）
 3. **智能识别状态**：自动判断签到结果（成功 / 失败 / 已签到）
-4. **详细签到信息**：
-   - 科研通：显示签到状态
-   - NewAPI：显示签到状态、累计天数、获得金额和历史记录
-5. **多推送通知**：
+4. **多推送通知**：
    - 钉钉机器人消息提醒（支持 Markdown 格式）
    - Bark 消息推送（iOS 专属，未测试）
+5. **统一代理解析**：`AUTO_TASK_PROXY` 一处配置；华为默认直连
 6. **异常处理机制**：自动捕获网络错误、Cookie 失效等问题
 7. **日志记录**：控制台输出详细的签到过程和结果
 
@@ -28,7 +27,7 @@
 在青龙面板「订阅管理」中添加：
 
 - **名称**：签到脚本
-- **链接**：`https://github.com/sheetung/autoCheckin.git`
+- **链接**：`https://github.com/sheetung/ql-auto-tasks.git`（旧地址 `sheetung/autoCheckin` 已迁移）
 - **分支**：`master`
 - **定时规则**：根据需求设置（例如 `0 0 * * *` 每天凌晨执行）
 - **文件后缀**：`py`
@@ -43,18 +42,11 @@
 export ABLESCI_COOKIES="cookie1&cookie2&cookie3"
 ```
 
-#### NewAPI
-在青龙面板「环境变量」中设置：
+#### NewAPI（已失效，勿配置）
 
-```bash
-# 推荐使用 JSON，pat 是“个人设置”中的面板访问令牌（User.AccessToken）
-export NEWAPI_ACCOUNTS_JSON='[{"url":"https://sample.com","pat":"your_panel_pat"}]'
-
-# 简写格式；多个站点用 & 分隔，每项为 url@PAT
-export NEWAPI_ACCOUNTS="https://sample.com@your_panel_pat&https://another.example.com@another_panel_pat"
-```
-
-> 必须使用面板 PAT，不是浏览器 Network 中的短期 Bearer JWT，也不是“令牌管理”中用于调用模型的 `sk-` API Key。新版浏览器 Access Token 通常仅有效 15 分钟，无法用于定时任务；旧 `session` Cookie 和 `New-Api-User` 已不再支持。
+> ⚠️ **该任务已失效**：面板接口/鉴权变更导致签到不可用，**不再维护**。
+> 请删除青龙中的 `NEWAPI_ACCOUNTS` / `NEWAPI_ACCOUNTS_JSON` / `NEWAPI_PROXY`，并停用 `newapi.py` 定时任务。
+> 脚本文件保留仅作历史存档，下文配置不再适用。
 
 #### Wiley论文状态监控
 在青龙面板「环境变量」中设置：
@@ -65,6 +57,8 @@ export WILEY_COOKIES="your_wiley_cookie_here"
 ```
 
 Cookie 获取方式：登录 https://authors.wiley.com/dashboard 后，F12 打开开发者工具 → Network → 刷新页面 → 点击任意请求 → 复制 Request Headers 中的 Cookie 值。
+
+若监控报 Cookie 失效或跳转到 error 页，优先检查代理是否可达（见下文「代理配置」）。
 
 #### PT 站点签到
 
@@ -95,26 +89,40 @@ export QINGWA_COOKIES="cookie1&cookie2"
 可选环境变量：
 
 ```bash
-# 可选：代理
+# 一般无需配置；华为官网国内直连，不走 AUTO_TASK_PROXY
+# 仅在必须走代理时：
 export HUAWEI_PROXY="http://127.0.0.1:7890"
 ```
 
 推送复用 `BARK_PUSH`、`BARK_SOUND`、`DD_BOT_TOKEN`、`DD_BOT_SECRET`。
 
-> 防爬情况：官网列表页是 JS 动态渲染，但 sitemap 与首页热门产品区为服务端输出，普通 UA + requests 即可稳定抓取，无需登录/Cookie，也未见验证码拦截。脚本内置重试与 UA 伪装；默认每半小时检查一次，无变动时只写本地状态、不推送。
-
+> 防爬情况：官网列表页是 JS 动态渲染，但 sitemap 与首页热门产品区为服务端输出，普通 UA + requests 即可稳定抓取，无需登录/Cookie，也未见验证码拦截。
 
 ### 3. 代理配置（可选）
+
+统一代理参数，一次配置多处生效。优先级：**脚本专属 > `AUTO_TASK_PROXY` > 系统 `https_proxy`**。
 
 在青龙面板「配置文件」中设置：
 
 ```bash
-# NewAPI 代理配置（可选）
-export NEWAPI_PROXY="http://127.0.0.1:7890"
+# 推荐：统一代理（Wiley 等需要科学上网的任务共用）
+export AUTO_TASK_PROXY="http://127.0.0.1:7890"
 
-# Wiley 代理配置（可选，不设置则使用系统代理）
+# 可选：脚本级覆盖（一般不用）
 export WILEY_PROXY="http://127.0.0.1:7890"
+
+# 华为官网国内直连，默认不走 AUTO_TASK_PROXY
+# 仅在必须走代理时才设置：
+# export HUAWEI_PROXY="http://127.0.0.1:7890"
 ```
+
+| 脚本 | 读取顺序 |
+|------|----------|
+| Wiley | 专属 `WILEY_PROXY` → `AUTO_TASK_PROXY` → 系统 `https_proxy` |
+| 华为新机监控 | 仅 `HUAWEI_PROXY`（默认直连，不受统一代理影响） |
+| 科研通 / PT 站 | 默认直连，不走代理 |
+
+公共解析逻辑在 `proxy_util.py`。
 
 ### 4. 推送配置（可选）
 
@@ -153,43 +161,27 @@ export BARK_PUSH="your_bark_key"
 ✅ 钉钉推送成功
 ```
 
-### NewAPI
-
-```bash
-正在签到第 1 个站点...
-正在签到站点: https://sg.uiuiapi.com
-使用认证方式: 面板 PAT
-尝试认证方式: 面板 PAT
-签到结果: {'status': 'success', 'message': '签到成功', 'data': {'message': '今日已签到', 'success': False}}
-第 1 个站点签到完成
-
-签到结果汇总：
-站点: https://sg.uiuiapi.com/
-结果: {'status': 'success', 'message': '签到成功', 'data': {'message': '今日已签到', 'success': False}}
-
-❌ Bark推送失败: 400 Client Error: Bad Request for url: https://api.day.app/%7Bkey%7D
-未配置钉钉推送，跳过通知
-```
-
 ### 华为新机监控
 
 ```bash
 ================================================
-华为官网新机监控  2026-09-10 22:40:31
+华为官网新机监控  2026-09-10 22:49:12
 ================================================
-✅ 从 sitemap.xml 解析到 47 款手机
-对比基线: 旧 47 款 → 新 47 款
-✅ 今日无新增/下架手机型号
-💾 状态已保存: .../huawei_phones_state.json（共 47 款）
+🔥 热门产品位 2 款: mate-xt-2-ultimate-design, pura-x-view
+✅ 产品页 47 款 | 发布会候选 22 场
+对比: 手机 47→47 | 发布会 22→22
+✅ 今日无新增信号
+💾 状态已保存: 手机 47 / 发布会 22
 ```
 
 首次运行会打印完整机型列表并建立基线；后续仅有变动时才推送。
 
 ## ⚠️ 注意事项
 
-1. 钉钉推送功能需要正确配置机器人权限，例如关键词和`DD_BOT_SECRET`
-2. NewAPI 仅使用面板 PAT 认证；脚本不会输出 PAT，也不会使用旧 Cookie、短期浏览器 JWT 或 `New-Api-User`
-3. 本工具仅用于学习交流，禁止用于商业用途
+1. 钉钉推送功能需要正确配置机器人权限，例如关键词和 `DD_BOT_SECRET`
+2. **NewAPI 任务已失效**，请勿再配置 `NEWAPI_*` 环境变量或启用对应定时任务
+3. Wiley 监控依赖可达的代理；Cookie 失效时请重新登录官网抓取 Cookie
+4. 本工具仅用于学习交流，禁止用于商业用途
 
 ## 📜 声明
 
@@ -201,7 +193,7 @@ export BARK_PUSH="your_bark_key"
 
 ## 📢 反馈与贡献
 
-- 提交问题：[GitHub Issues](https://github.com/sheetung/autoCheckin/issues)
-- 代码贡献：[Fork & Pull Request](https://github.com/sheetung/autoCheckin/pulls)
+- 提交问题：[GitHub Issues](https://github.com/sheetung/ql-auto-tasks/issues)
+- 代码贡献：[Fork & Pull Request](https://github.com/sheetung/ql-auto-tasks/pulls)
 
 > 开源协议：MIT License

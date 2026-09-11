@@ -13,7 +13,8 @@ import base64
 import urllib.parse
 
 # 添加bark推送
-bark_push = "https://api.day.app/{key}" #(自建推送的自行替换整段url，非自建只需替换key即可)
+bark_push = os.environ.get("BARK_PUSH", "")
+bark_push = f"https://api.day.app/{bark_push}" if bark_push and not bark_push.startswith("http") else bark_push
 bark_group = "AbleSci"
 bark_icon = "https://staticres.ablesci.com/apple-touch-icon.png"
 bark_sound = os.environ.get("BARK_SOUND", "")
@@ -44,7 +45,7 @@ class AbleSci:
         }
         url = "https://www.ablesci.com/user/sign"
         try:
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             result = response.json()
             return {"status": "success", "message": "签到成功", "data": result}
