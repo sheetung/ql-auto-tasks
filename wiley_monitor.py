@@ -16,32 +16,31 @@ from datetime import datetime
 
 import requests
 
-try:
-    from proxy_util import resolve_proxy, apply_to_env
-except ImportError:
-    def resolve_proxy(*names, use_unified=True, use_system=True):
-        for name in names:
-            v = os.environ.get(name) or os.environ.get(name.lower())
+# 代理解析（内联，避免青龙把公共库当成定时任务）
+def resolve_proxy(*names, use_unified=True, use_system=True):
+    for name in names:
+        v = os.environ.get(name) or os.environ.get(name.lower())
+        if v:
+            return v.strip()
+    if use_unified:
+        v = os.environ.get("AUTO_TASK_PROXY") or os.environ.get("auto_task_proxy")
+        if v:
+            return v.strip()
+    if use_system:
+        for key in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
+            v = os.environ.get(key)
             if v:
                 return v.strip()
-        if use_unified:
-            v = os.environ.get("AUTO_TASK_PROXY") or os.environ.get("auto_task_proxy")
-            if v:
-                return v.strip()
-        if use_system:
-            for key in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
-                v = os.environ.get(key)
-                if v:
-                    return v.strip()
-        return ""
+    return ""
 
-    def apply_to_env(env, proxy_url):
-        if not proxy_url:
-            return env
-        env = dict(env)
-        env["http_proxy"] = env["https_proxy"] = proxy_url
-        env["HTTP_PROXY"] = env["HTTPS_PROXY"] = proxy_url
+
+def apply_to_env(env, proxy_url):
+    if not proxy_url:
         return env
+    env = dict(env)
+    env["http_proxy"] = env["https_proxy"] = proxy_url
+    env["HTTP_PROXY"] = env["HTTPS_PROXY"] = proxy_url
+    return env
 
 # 添加bark推送
 bark_push = os.environ.get("BARK_PUSH", "")  # 填入你的 bark key 或完整 URL

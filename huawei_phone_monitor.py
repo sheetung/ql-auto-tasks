@@ -34,20 +34,19 @@ dingtalk_token = os.environ.get("DD_BOT_TOKEN", "")
 dingtalk_secret = os.environ.get("DD_BOT_SECRET", "")
 
 # 华为官网国内可直连，默认不走统一代理；仅在显式设置 HUAWEI_PROXY 时使用
-try:
-    from proxy_util import resolve_proxy, requests_proxies
-except ImportError:
-    def resolve_proxy(*names, use_unified=True, use_system=True):
-        for name in names:
-            v = os.environ.get(name) or os.environ.get(name.lower())
-            if v:
-                return v.strip()
-        return ""
+# （内联代理解析，避免青龙把公共库当成定时任务）
+def resolve_proxy(*names, use_unified=True, use_system=True):
+    for name in names:
+        v = os.environ.get(name) or os.environ.get(name.lower())
+        if v:
+            return v.strip()
+    return ""
 
-    def requests_proxies(proxy_url):
-        if not proxy_url:
-            return {}
-        return {"http": proxy_url, "https": proxy_url}
+
+def requests_proxies(proxy_url):
+    if not proxy_url:
+        return {}
+    return {"http": proxy_url, "https": proxy_url}
 
 huawei_proxy = resolve_proxy("HUAWEI_PROXY", use_unified=False, use_system=False)
 

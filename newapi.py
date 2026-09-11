@@ -153,30 +153,27 @@ class NewAPI:
             "X-Requested-With": "XMLHttpRequest"
         }
         
-        # 读取代理：NEWAPI_PROXY > AUTO_TASK_PROXY > 系统 https_proxy
-        try:
-            from proxy_util import resolve_proxy, requests_proxies
-        except ImportError:
-            def resolve_proxy(*names, use_unified=True, use_system=True):
-                for name in names:
-                    v = os.environ.get(name) or os.environ.get(name.lower())
+        # 读取代理：NEWAPI_PROXY > AUTO_TASK_PROXY > 系统 https_proxy（内联，避免额外 .py 被青龙调度）
+        def resolve_proxy(*names, use_unified=True, use_system=True):
+            for name in names:
+                v = os.environ.get(name) or os.environ.get(name.lower())
+                if v:
+                    return v.strip()
+            if use_unified:
+                v = os.environ.get("AUTO_TASK_PROXY") or os.environ.get("auto_task_proxy")
+                if v:
+                    return v.strip()
+            if use_system:
+                for key in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
+                    v = os.environ.get(key)
                     if v:
                         return v.strip()
-                if use_unified:
-                    v = os.environ.get("AUTO_TASK_PROXY") or os.environ.get("auto_task_proxy")
-                    if v:
-                        return v.strip()
-                if use_system:
-                    for key in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
-                        v = os.environ.get(key)
-                        if v:
-                            return v.strip()
-                return ""
+            return ""
 
-            def requests_proxies(proxy_url):
-                if not proxy_url:
-                    return {}
-                return {"http": proxy_url, "https": proxy_url}
+        def requests_proxies(proxy_url):
+            if not proxy_url:
+                return {}
+            return {"http": proxy_url, "https": proxy_url}
 
         proxies = requests_proxies(resolve_proxy("NEWAPI_PROXY"))
 
