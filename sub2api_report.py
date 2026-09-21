@@ -398,14 +398,13 @@ def send_dingtalk(text):
     if not dingtalk_token:
         print("未配置钉钉推送，跳过")
         return
-    # 钉钉 Markdown 嵌套列表易乱，正文用「标签｜值」扁平排版
-    md_text = f"### {TITLE}\n\n{text}"
+
+    # 钉钉 Markdown 会吞掉单个换行，整段糊在一起。
+    # 这里用 text 消息 + 逐行换行，保证可读。
+    content = f"{TITLE}\n\n{text}"
     data = {
-        "msgtype": "markdown",
-        "markdown": {
-            "title": TITLE,
-            "text": md_text,
-        },
+        "msgtype": "text",
+        "text": {"content": content},
     }
     if dingtalk_secret:
         timestamp = str(round(time.time() * 1000))
