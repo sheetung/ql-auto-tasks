@@ -255,76 +255,87 @@ def summarize_keys(keys):
     return rows
 
 
+def fmt_time(value):
+    """ISO 时间 → 09-21 13:37，便于钉钉阅读。"""
+    if not value:
+        return "-"
+    s = str(value)
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo:
+            dt = dt.astimezone(CST)
+        return dt.strftime("%m-%d %H:%M")
+    except ValueError:
+        return s[:16].replace("T", " ")
+
+
+def kv(label, value):
+    return f"{label}｜{value}"
+
+
 def build_report(base, profile, stats, daily, key_rows):
     email = profile.get("email") or f"uid:{profile.get('id')}"
     balance = profile.get("balance") or 0
     frozen = profile.get("frozen_balance") or 0
     status = profile.get("status") or "unknown"
     recharged = profile.get("total_recharged") or 0
-    last_active = profile.get("last_active_at") or "-"
+    last_active = fmt_time(profile.get("last_active_at"))
     rpm_limit = profile.get("rpm_limit") or 0
     concurrency = profile.get("concurrency") or 0
     groups = profile.get("allowed_groups") or []
 
-    lines = []
-    lines.append(f"**站点**: {base}")
-    lines.append(f"**账号**: {email}（{status}）")
-    lines.append(f"**余额**: {balance:.4f}（冻结 {frozen:.4f}，累计充值 {recharged}）")
-    lines.append(f"**最后活跃**: {last_active}")
+    L = []
+    L.append(base)
+    L.append(kv("账号", f"{email}  [{status}]"))
+    L.append(kv("余额", f"{balance:.2f}"))
+    L.append(kv("冻结/充值", f"{frozen:.2f} / {recharged}"))
+    L.append(kv("最后活跃", last_active))
     if rpm_limit or concurrency or groups:
-        lines.append(
-            f"**限制**: RPM {rpm_limit or '不限'} / 并发 {concurrency or '-'}"
-            + (f" / 分组 {groups}" if groups else "")
-        )
-    lines.append("")
+        L.append(kv("限制", f"RPM {rpm_limit or '-'}  并发 {concurrency or '-'}  组 {groups or '-'}"))
 
+    L.append("")
+    L.append("—— 今日用量 ——")
     if daily:
-        lines.append("**今日用量**")
-        lines.append(f"- 请求数: **{daily['requests']}**（流式 {daily['stream_count']}）")
-        lines.append(
-            f"- Tokens: 入 {fmt_tokens(daily['input_tokens'])} / "
-            f"出 {fmt_tokens(daily['output_tokens'])} / "
-            f"缓存读 {fmt_tokens(daily['cache_read'])} / "
-            f"缓存写 {fmt_tokens(daily['cache_creation'])} / "
-            f"合计 **{fmt_tokens(daily['total_tokens'])}**"
-        )
-        lines.append(
-            f"- 花费: **{daily['cost']:.4f}**"
-            f"（入 {daily['input_cost']:.4f} / 出 {daily['output_cost']:.4f}"
-            f" / 缓存 {daily['cache_cost']:.4f}）"
-        )
-        lines.append(
-            f"- 延迟: 平均 {daily['avg_duration_s']:.1f}s / "
-            f"P95 {daily['p95_duration_s']:.1f}s / "
-            f"首Token {daily['avg_first_token_s']:.1f}s"
-        )
-        lines.append(f"- 活跃会话: **{daily['session_count']}**")
+        L.append(kv("请求", f"{daily['requests']}  (流式 {daily['stream_count']})"))
+        L.append(kv("Tokens", fmt_tokens(daily['total_tokens'])))
+        L.append(kv("  拆分", (
+            f"入 {fmt_tokens(daily['input_tokens'])} · "
+            f"出 {fmt_tokens(daily['output_tokens'])} · "
+            f"缓存R {fmt_tokens(daily['cache_read'])} · "
+            f"缓存W {fmt_tokens(daily['cache_creation'])}"
+        )))
+        L.append(kv("花费", f"{daily['cost']:.2f}"))
+        L.append(kv("  拆分", (
+            f"入 {daily['input_cost']:.2f} · "
+            f"出 {daily['output_cost']:.2f} · "
+            f"缓存 {daily['cache_cost']:.2f}"
+        )))
+        L.append(kv("延迟", (
+            f"均 {daily['avg_duration_s']:.1f}s · "
+            f"P95 {daily['p95_duration_s']:.1f}s · "
+            f"首包 {daily['avg_first_token_s']:.1f}s"
+        )))
+        L.append(kv("会话", str(daily['session_count'])))
         if daily.get("image_count"):
-            lines.append(f"- 图像请求: {daily['image_count']}")
+            L.append(kv("图像", str(daily['image_count'])))
         if daily["top_models"]:
-            lines.append("- 热门模型:")
-            for m, c in daily["top_models"]:
-                lines.append(f"  - `{m}` × {c}")
+            L.append(kv("模型", ", ".join(f"{m}×{c}" for m, c in daily["top_models"])))
         if daily["top_endpoints"]:
-            eps = ", ".join(f"`{e}`×{c}" for e, c in daily["top_endpoints"])
-            lines.append(f"- 端点: {eps}")
+            L.append(kv("端点", ", ".join(f"{e}×{c}" for e, c in daily["top_endpoints"])))
         if daily["top_keys"]:
-            keys_s = ", ".join(f"{n}×{c}" for n, c in daily["top_keys"])
-            lines.append(f"- API Key: {keys_s}")
+            L.append(kv("Key", ", ".join(f"{n}×{c}" for n, c in daily["top_keys"])))
         if daily["efforts"]:
-            efforts = ", ".join(f"{e}×{c}" for e, c in daily["efforts"])
-            lines.append(f"- reasoning_effort: {efforts}")
+            L.append(kv("effort", ", ".join(f"{e}×{c}" for e, c in daily["efforts"])))
         if daily["top_uas"]:
-            uas = "; ".join(f"{u}×{c}" for u, c in daily["top_uas"])
-            lines.append(f"- 客户端: {uas}")
-        lines.append("")
+            ua_short = ", ".join(f"{u[:24]}×{c}" for u, c in daily["top_uas"])
+            L.append(kv("客户端", ua_short))
+    else:
+        L.append("(今日用量获取失败)")
 
     if key_rows:
-        lines.append("**API Key 窗口**")
+        L.append("")
+        L.append("—— API Key ——")
         for k in key_rows:
-            quota = ""
-            if k.get("quota"):
-                quota = f" / 配额 {k.get('quota_used')}/{k.get('quota')}"
             limits = []
             for label, u, lim in (
                 ("5h", k.get("usage_5h"), k.get("rate_limit_5h")),
@@ -336,37 +347,32 @@ def build_report(base, profile, stats, daily, key_rows):
                 u_s = "-" if u is None else u
                 lim_s = "∞" if not lim else lim
                 limits.append(f"{label} {u_s}/{lim_s}")
-            lines.append(
-                f"- `{k['name']}`（{k['status']}） "
-                f"{' '.join(limits) if limits else '无窗口数据'}"
-                f" / 并发 {k.get('current_concurrency') or 0}{quota}"
-            )
-            if k.get("last_used_at"):
-                lines.append(f"  - 最后使用: {k['last_used_at']}")
-        lines.append("")
+            L.append(f"{k['name']}  [{k['status']}]")
+            L.append(kv("窗口", " ".join(limits) if limits else "-"))
+            L.append(kv("并发/配额", (
+                f"{k.get('current_concurrency') or 0}"
+                + (f" / {k.get('quota_used')}/{k.get('quota')}" if k.get("quota") else "")
+            )))
+            L.append(kv("最后使用", fmt_time(k.get("last_used_at"))))
 
     if stats:
-        lines.append("**累计用量（接口 stats）**")
-        lines.append(f"- 请求数: {stats.get('total_requests', 0)}")
-        lines.append(
-            f"- Tokens 合计: {fmt_tokens(stats.get('total_tokens'))}"
-            f"（入 {fmt_tokens(stats.get('total_input_tokens'))}"
-            f" / 出 {fmt_tokens(stats.get('total_output_tokens'))}"
-            f" / 缓存 {fmt_tokens(stats.get('total_cache_tokens'))}）"
-        )
-        lines.append(f"- 累计花费: {float(stats.get('total_cost') or 0):.4f}")
+        L.append("")
+        L.append("—— 累计 ——")
+        L.append(kv("请求", str(stats.get("total_requests", 0))))
+        L.append(kv("Tokens", fmt_tokens(stats.get("total_tokens"))))
+        L.append(kv("花费", f"{float(stats.get('total_cost') or 0):.2f}"))
         avg = stats.get("average_duration_ms")
         if avg:
-            lines.append(f"- 平均耗时: {float(avg) / 1000:.1f}s")
+            L.append(kv("均耗时", f"{float(avg) / 1000:.1f}s"))
         eps = stats.get("endpoints") or []
         if eps:
             parts = [
-                f"`{e.get('endpoint')}` {e.get('requests')}次/{float(e.get('cost') or 0):.2f}"
-                for e in eps[:5]
+                f"{e.get('endpoint')} {e.get('requests')}次/{float(e.get('cost') or 0):.2f}"
+                for e in eps[:4]
             ]
-            lines.append(f"- 分端点: {', '.join(parts)}")
+            L.append(kv("端点", ", ".join(parts)))
 
-    return "\n".join(lines)
+    return "\n".join(L)
 
 
 def send_bark(text):
@@ -392,11 +398,13 @@ def send_dingtalk(text):
     if not dingtalk_token:
         print("未配置钉钉推送，跳过")
         return
+    # 钉钉 Markdown 嵌套列表易乱，正文用「标签｜值」扁平排版
+    md_text = f"### {TITLE}\n\n{text}"
     data = {
         "msgtype": "markdown",
         "markdown": {
             "title": TITLE,
-            "text": f"## {TITLE}\n\n{text}",
+            "text": md_text,
         },
     }
     if dingtalk_secret:
