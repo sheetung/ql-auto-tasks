@@ -274,103 +274,37 @@ def kv(label, value):
 
 
 def build_report(base, profile, stats, daily, key_rows):
+    """精简日报：余额 + 今日核心用量 + 模型摘要。"""
     email = profile.get("email") or f"uid:{profile.get('id')}"
     balance = profile.get("balance") or 0
-    frozen = profile.get("frozen_balance") or 0
     status = profile.get("status") or "unknown"
-    recharged = profile.get("total_recharged") or 0
-    last_active = fmt_time(profile.get("last_active_at"))
-    rpm_limit = profile.get("rpm_limit") or 0
-    concurrency = profile.get("concurrency") or 0
-    groups = profile.get("allowed_groups") or []
 
-    L = []
-    L.append(base)
-    L.append(kv("账号", f"{email}  [{status}]"))
+    L = [base]
+    L.append(kv("账号", f"{email} [{status}]"))
     L.append(kv("余额", f"{balance:.2f}"))
-    L.append(kv("冻结/充值", f"{frozen:.2f} / {recharged}"))
-    L.append(kv("最后活跃", last_active))
-    if rpm_limit or concurrency or groups:
-        L.append(kv("限制", f"RPM {rpm_limit or '-'}  并发 {concurrency or '-'}  组 {groups or '-'}"))
 
-    L.append("")
-    L.append("—— 今日用量 ——")
     if daily:
-        L.append(kv("请求", f"{daily['requests']}  (流式 {daily['stream_count']})"))
-        L.append(kv("Tokens", fmt_tokens(daily['total_tokens'])))
-        L.append(kv("  拆分", (
-            f"入 {fmt_tokens(daily['input_tokens'])} · "
-            f"出 {fmt_tokens(daily['output_tokens'])} · "
-            f"缓存R {fmt_tokens(daily['cache_read'])} · "
-            f"缓存W {fmt_tokens(daily['cache_creation'])}"
+        L.append(kv("今日", (
+            f"{daily['requests']}次 · "
+            f"{fmt_tokens(daily['total_tokens'])} · "
+            f"花费 {daily['cost']:.2f}"
         )))
-        L.append(kv("花费", f"{daily['cost']:.2f}"))
-        L.append(kv("  拆分", (
-            f"入 {daily['input_cost']:.2f} · "
-            f"出 {daily['output_cost']:.2f} · "
-            f"缓存 {daily['cache_cost']:.2f}"
-        )))
-        L.append(kv("延迟", (
-            f"均 {daily['avg_duration_s']:.1f}s · "
-            f"P95 {daily['p95_duration_s']:.1f}s · "
-            f"首包 {daily['avg_first_token_s']:.1f}s"
-        )))
-        L.append(kv("会话", str(daily['session_count'])))
-        if daily.get("image_count"):
-            L.append(kv("图像", str(daily['image_count'])))
+        L.append(kv("延迟", f"均 {daily['avg_duration_s']:.1f}s"))
         if daily["top_models"]:
-            L.append(kv("模型", ", ".join(f"{m}×{c}" for m, c in daily["top_models"])))
-        if daily["top_endpoints"]:
-            L.append(kv("端点", ", ".join(f"{e}×{c}" for e, c in daily["top_endpoints"])))
-        if daily["top_keys"]:
-            L.append(kv("Key", ", ".join(f"{n}×{c}" for n, c in daily["top_keys"])))
-        if daily["efforts"]:
-            L.append(kv("effort", ", ".join(f"{e}×{c}" for e, c in daily["efforts"])))
-        if daily["top_uas"]:
-            ua_short = ", ".join(f"{u[:24]}×{c}" for u, c in daily["top_uas"])
-            L.append(kv("客户端", ua_short))
+            top = daily["top_models"][:2]
+            L.append(kv("模型", "  ".join(f"{m}×{c}" for m, c in top)))
     else:
-        L.append("(今日用量获取失败)")
+        L.append(kv("今日", "获取失败"))
 
-    if key_rows:
-        L.append("")
-        L.append("—— API Key ——")
-        for k in key_rows:
-            limits = []
-            for label, u, lim in (
-                ("5h", k.get("usage_5h"), k.get("rate_limit_5h")),
-                ("1d", k.get("usage_1d"), k.get("rate_limit_1d")),
-                ("7d", k.get("usage_7d"), k.get("rate_limit_7d")),
-            ):
-                if u is None and lim is None:
-                    continue
-                u_s = "-" if u is None else u
-                lim_s = "∞" if not lim else lim
-                limits.append(f"{label} {u_s}/{lim_s}")
-            L.append(f"{k['name']}  [{k['status']}]")
-            L.append(kv("窗口", " ".join(limits) if limits else "-"))
-            L.append(kv("并发/配额", (
-                f"{k.get('current_concurrency') or 0}"
-                + (f" / {k.get('quota_used')}/{k.get('quota')}" if k.get("quota") else "")
-            )))
-            L.append(kv("最后使用", fmt_time(k.get("last_used_at"))))
-
-    if stats:
-        L.append("")
-        L.append("—— 累计 ——")
-        L.append(kv("请求", str(stats.get("total_requests", 0))))
-        L.append(kv("Tokens", fmt_tokens(stats.get("total_tokens"))))
-        L.append(kv("花费", f"{float(stats.get('total_cost') or 0):.2f}"))
-        avg = stats.get("average_duration_ms")
-        if avg:
-            L.append(kv("均耗时", f"{float(avg) / 1000:.1f}s"))
-        eps = stats.get("endpoints") or []
-        if eps:
-            parts = [
-                f"{e.get('endpoint')} {e.get('requests')}次/{float(e.get('cost') or 0):.2f}"
-                for e in eps[:4]
-            ]
-            L.append(kv("端点", ", ".join(parts)))
+    # 有配额限制的 Key 才提醒，避免刷屏
+    limited = [
+        k for k in (key_rows or [])
+        if k.get("rate_limit_1d") or k.get("quota")
+    ]
+    if limited:
+        for k in limited[:2]:
+            if k.get("quota"):
+                L.append(kv("Key", f"{k['name']} 配额 {k.get('quota_used')}/{k.get('quota')}"))
 
     return "\n".join(L)
 
@@ -482,11 +416,9 @@ def main():
         else:
             daily = summarize_items(items or [])
             print(
-                f"✅ 今日 {daily['requests']} 次请求，"
-                f"花费 {daily['cost']:.4f}，"
-                f"tokens {fmt_tokens(daily['total_tokens'])}，"
-                f"平均 {daily['avg_duration_s']:.1f}s / "
-                f"会话 {daily['session_count']}"
+                f"✅ 今日 {daily['requests']} 次 · "
+                f"{fmt_tokens(daily['total_tokens'])} · "
+                f"花费 {daily['cost']:.2f}"
             )
 
         profile = profile_body.get("data") or {}
