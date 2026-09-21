@@ -289,7 +289,7 @@ export HUAWEI_PROXY="http://127.0.0.1:7890"
 
 ```bash
 # 必填：url@token，多个用 & 分隔
-export SUB2API_ACCOUNTS="http://192.168.125.222:18080@your_jwt_token"
+export SUB2API_ACCOUNTS="http://127.0.0.1:18080@your_jwt_token"
 # 多站点示例：
 # export SUB2API_ACCOUNTS="http://host1:port@token1&http://host2:port@token2"
 ```
@@ -302,7 +302,7 @@ export SUB2API_ACCOUNTS="http://192.168.125.222:18080@your_jwt_token"
 ================================================
 sub2api 日报  2026-09-21 13:32:15
 ================================================
-➡️ 检查站点 1: http://192.168.125.222:18080
+➡️ 检查站点 1: http://127.0.0.1:18080
 ✅ API Key 1 个
 ✅ 今日 431 次请求，花费 67.6160，tokens 65.64M，平均 25.3s / 会话 1
 ✅ 余额 9931.38
