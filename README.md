@@ -29,7 +29,8 @@
 | [`ptlover_check.py`](#3-爱猫-ptlover-站签到) | 爱猫 PT 站签到 | `0 9 * * *` | 可用 |
 | [`wiley_monitor.py`](#4-wiley-论文状态监控) | Wiley 论文投稿状态监控 | `35 * * * *` | 可用（需代理 + Cookie） |
 | [`huawei_phone_monitor.py`](#5-华为官网新机监控) | 华为官网新机监控 | `*/30 * * * *` | 可用（国内直连） |
-| [`newapi.py`](#6-newapi已失效) | NewAPI 站点签到 | — | **已失效** |
+| [`sub2api_report.py`](#6-sub2api-日报) | sub2api 用量日报 | `0 22 * * *` | 可用（`SUB2API_ACCOUNTS`） |
+| [`newapi.py`](#7-newapi已失效) | NewAPI 站点签到 | — | **已失效** |
 
 > 代理解析已内联到各脚本，仓库中**没有**需要被青龙调度的公共库文件。
 
@@ -59,6 +60,11 @@ export DD_BOT_SECRET="your_dingtalk_secret"
 ```
 
 > 钉钉机器人安全设置请选择「自定义关键词」，添加 `autoTask`。
+>
+> 若日志出现 `errcode:310000 关键词不匹配`，多半是**青龙面板自带的「开始执行/结束」通知**（不含 `autoTask`）被拦了，不是本仓库脚本的业务推送。处理方式任选其一：
+> 1. 青龙「系统设置 → 通知」把消息标题/内容模板加上 `autoTask`
+> 2. 钉钉机器人安全设置改用「加签」，不要只靠关键词
+> 3. 关闭该定时任务的青龙通知，只保留脚本自己在**有变动时**的推送（业务通知标题均已含 `【autoTask】`）
 
 ### 代理
 
@@ -269,7 +275,46 @@ export HUAWEI_PROXY="http://127.0.0.1:7890"
 
 ---
 
-### 6. NewAPI（已失效）
+### 6. sub2api 日报
+
+| 项 | 值 |
+|----|-----|
+| 文件 | `sub2api_report.py` |
+| cron | `0 22 * * *`（每天 22:00） |
+| 代理 | 默认直连；可设 `SUB2API_PROXY` / `AUTO_TASK_PROXY` |
+
+调用 sub2api 的 `/api/v1/user/profile`、`/api/v1/usage/stats`、`/api/v1/usage`，汇总余额与当日用量后推送。
+
+**环境变量**
+
+```bash
+# 必填：url@token，多个用 & 分隔
+export SUB2API_ACCOUNTS="http://192.168.125.222:18080@your_jwt_token"
+# 多站点示例：
+# export SUB2API_ACCOUNTS="http://host1:port@token1&http://host2:port@token2"
+```
+
+请求头：`Authorization: Bearer <token>`
+
+**运行示例**
+
+```text
+================================================
+sub2api 日报  2026-09-21 13:32:15
+================================================
+➡️ 检查站点 1: http://192.168.125.222:18080
+✅ API Key 1 个
+✅ 今日 431 次请求，花费 67.6160，tokens 65.64M，平均 25.3s / 会话 1
+✅ 余额 9931.38
+```
+
+推送标题：`【autoTask】sub2api日报`。
+
+日报包含：余额/累计充值/最后活跃、今日请求与成本拆分（入/出/缓存）、Tokens、延迟（平均/P95/首Token）、活跃会话、热门模型与端点、API Key 及 5h/1d/7d 窗口用量、累计 stats。
+
+---
+
+### 7. NewAPI（已失效）
 
 | 项 | 值 |
 |----|-----|
