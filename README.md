@@ -30,7 +30,8 @@
 | [`wiley_monitor.py`](#4-wiley-论文状态监控) | Wiley 论文投稿状态监控 | `35 * * * *` | 可用（需代理 + Cookie） |
 | [`huawei_phone_monitor.py`](#5-华为官网新机监控) | 华为官网新机监控 | `*/30 * * * *` | 可用（国内直连） |
 | [`sub2api_report.py`](#6-sub2api-日报) | sub2api 用量日报 | `0 22 * * *` | 可用（`SUB2API_ACCOUNTS`） |
-| [`newapi.py`](#7-newapi已失效) | NewAPI 站点签到 | — | **已失效** |
+| [`codex_reset_monitor.py`](#7-codex-重置监控) | Codex 额度重置通知 | `23 * * * *` | 可用（公开 API） |
+| [`newapi.py`](#8-newapi已失效) | NewAPI 站点签到 | — | **已失效** |
 
 > 代理解析已内联到各脚本，仓库中**没有**需要被青龙调度的公共库文件。
 
@@ -341,7 +342,40 @@ http://127.0.0.1:18080
 
 ---
 
-### 7. NewAPI（已失效）
+### 7. Codex 重置监控
+
+| 项 | 值 |
+|----|-----|
+| 文件 | `codex_reset_monitor.py` |
+| cron | `23 * * * *`（每小时 23 分） |
+| 代理 | 可走 `AUTO_TASK_PROXY` / 系统代理 |
+
+从 [codex-resets.com](https://codex-resets.com/zh-CN) 公开 API 拉取 OpenAI Codex 额度重置公告（跟踪 [@thsottiaux](https://x.com/thsottiaux) 推文），有新的**已记录重置**或**安排中的重置**时推送。
+
+**接口**
+
+- `GET https://codex-resets.com/api/v1/status`
+- 文档：https://codex-resets.com/api/docs
+
+**环境变量**：无（复用 `BARK_*` / `DD_BOT_*`）
+
+**运行示例**
+
+```text
+================================================
+Codex 重置监控  2026-09-22 19:00:55
+================================================
+最近重置: 09-12 16:09  regular
+安排中: 09-23 14:59  regular
+统计: 共 53 次 · 距上次 10.1 天 · 平均 6.9 天
+✅ 无新的重置公告
+```
+
+状态文件：`codex_reset_state.json`。首次运行只建基线，不推送。
+
+---
+
+### 8. NewAPI（已失效）
 
 | 项 | 值 |
 |----|-----|
