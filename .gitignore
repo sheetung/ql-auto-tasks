@@ -2,3 +2,4 @@ __pycache__/
 wiley_state_*.json
 wiley_cookie_alert_*.json
 huawei_phones_state.json
+sub2api_refresh_*.json

@@ -10,6 +10,7 @@ import hashlib
 import base64
 import urllib.parse
 import time
+import json
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -46,6 +47,7 @@ def resolve_proxy(*names, use_unified=True, use_system=True):
 sub2api_proxy = resolve_proxy("SUB2API_PROXY")
 CST = timezone(timedelta(hours=8))
 TITLE = "【autoTask】sub2api日报"
+STATE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def make_session():
@@ -64,7 +66,10 @@ def make_session():
 
 
 def parse_accounts():
-    """只用 SUB2API_ACCOUNTS="url@token&url2@token2" """
+    """SUB2API_ACCOUNTS="url@jwt[@refresh_token]&..."
+    - url@jwt          手动贴 JWT（约 24h）
+    - url@jwt@refresh  日报前自动 refresh_token 换新 JWT
+    """
     accounts = []
     multi = os.environ.get("SUB2API_ACCOUNTS") or os.environ.get("sub2api_accounts") or ""
     if not multi:
@@ -73,11 +78,16 @@ def parse_accounts():
         item = item.strip()
         if not item or "@" not in item:
             continue
-        url, token = item.rsplit("@", 1)
+        if item.count("@") >= 2:
+            url, token, refresh = item.rsplit("@", 2)
+        else:
+            url, token = item.rsplit("@", 1)
+            refresh = ""
         url = url.strip().rstrip("/")
         token = token.strip()
+        refresh = refresh.strip()
         if url and token:
-            accounts.append((url, token))
+            accounts.append((url, token, refresh))
     return accounts
 
 
@@ -99,6 +109,51 @@ def api_get(session, base, token, path, params=None):
     if isinstance(body, dict) and "code" in body and body.get("code") not in (0, None, "0"):
         return {"error": body.get("message") or str(body)[:200]}
     return body
+
+
+def _pick_token(body, *keys):
+    if not isinstance(body, dict):
+        return ""
+    data = body.get("data") if isinstance(body.get("data"), dict) else body
+    for k in keys:
+        v = data.get(k) or body.get(k)
+        if v:
+            return str(v).strip()
+    return ""
+
+
+def refresh_jwt(session, base, refresh_token):
+    """POST /api/v1/auth/refresh → 新 JWT（及可能轮换的 refresh_token）。"""
+    url = base + "/api/v1/auth/refresh"
+    try:
+        resp = session.post(
+            url,
+            json={"refresh_token": refresh_token},
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            timeout=30,
+        )
+    except requests.RequestException as e:
+        return {"error": f"refresh 请求失败: {type(e).__name__}: {e}"}
+
+    if resp.status_code in (400, 401, 403):
+        return {
+            "error": f"refresh 失败 HTTP {resp.status_code}: {resp.text[:200]}",
+            "auth_failed": True,
+        }
+    if resp.status_code >= 400:
+        return {"error": f"refresh HTTP {resp.status_code}: {resp.text[:200]}"}
+    try:
+        body = resp.json()
+    except ValueError:
+        return {"error": f"refresh 非 JSON: {resp.text[:200]}"}
+    if isinstance(body, dict) and "code" in body and body.get("code") not in (0, None, "0"):
+        return {"error": body.get("message") or str(body)[:200]}
+
+    access = _pick_token(body, "access_token", "accessToken", "token", "jwt", "access")
+    if not access:
+        return {"error": f"refresh 响应缺少 access_token: {str(body)[:200]}"}
+    new_refresh = _pick_token(body, "refresh_token", "refreshToken", "refresh")
+    return {"access_token": access, "refresh_token": new_refresh or refresh_token}
 
 
 def fmt_tokens(n):
@@ -386,11 +441,31 @@ def main():
     session = make_session()
     reports = []
 
-    for idx, (base, token) in enumerate(accounts, 1):
+    for idx, (base, token, refresh) in enumerate(accounts, 1):
         print(f"\n➡️ 检查站点 {idx}: {base}")
         session = make_session()
 
-        # 控制台 JWT（约 1 天有效）。sk- API Key 的 /v1/usage 只统计该 Key 自身，不适合账号日报。
+        # 有 refresh_token 则先换新 JWT（约 24h 有效，青龙每日自动续）
+        if refresh:
+            print("   （使用 refresh_token 更新 JWT）")
+            rr = refresh_jwt(session, base, refresh)
+            if "error" in rr:
+                print(f"❌ {rr['error']}")
+                reports.append(f"{base}\n状态｜❌ {rr['error']}")
+                continue
+            token = rr["access_token"]
+            if rr.get("refresh_token") and rr["refresh_token"] != refresh:
+                # refresh_token 轮换：写回本地，避免下次失效
+                state_path = os.path.join(STATE_DIR, f"sub2api_refresh_{idx}.json")
+                try:
+                    with open(state_path, "w", encoding="utf-8") as f:
+                        json.dump({"base": base, "refresh_token": rr["refresh_token"]}, f)
+                    print(f"   refresh_token 已轮换并保存: {os.path.basename(state_path)}")
+                    print(f"   请更新青龙 SUB2API_ACCOUNTS 中的 refresh 部分为新值")
+                except OSError as e:
+                    print(f"⚠️ 保存新 refresh_token 失败: {e}")
+            print("   JWT 已刷新")
+
         profile_body = api_get(session, base, token, "/api/v1/user/profile")
         if "error" in profile_body:
             print(f"❌ 获取 profile 失败: {profile_body['error']}")
