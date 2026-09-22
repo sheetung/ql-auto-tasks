@@ -81,11 +81,6 @@ def parse_accounts():
     return accounts
 
 
-def is_api_key(token):
-    """sk- 开头视为官方 /v1/usage 用量接口密钥（不过期）。"""
-    return bool(token) and token.strip().startswith("sk-")
-
-
 def api_get(session, base, token, path, params=None):
     url = base + path
     headers = {"Authorization": f"Bearer {token}"}
@@ -101,15 +96,9 @@ def api_get(session, base, token, path, params=None):
         body = resp.json()
     except ValueError:
         return {"error": f"非 JSON 响应: {resp.text[:200]}"}
-    # /v1/usage 顶层无 code 字段；带 code 的接口才校验
     if isinstance(body, dict) and "code" in body and body.get("code") not in (0, None, "0"):
         return {"error": body.get("message") or str(body)[:200]}
     return body
-
-
-def fetch_key_usage(session, base, token):
-    """官方用量统计接口 GET /v1/usage（API Key）。"""
-    return api_get(session, base, token, "/v1/usage")
 
 
 def fmt_tokens(n):
@@ -287,35 +276,6 @@ def kv(label, value):
     return f"{label}｜{value}"
 
 
-def build_report_key(base, data):
-    """API Key /v1/usage 精简日报。"""
-    balance = data.get("balance") or 0
-    remaining = data.get("remaining")
-    plan = data.get("planName") or data.get("mode") or "-"
-    valid = data.get("isValid")
-    unit = data.get("unit") or "USD"
-    today = (data.get("usage") or {}).get("today") or {}
-    total = (data.get("usage") or {}).get("total") or {}
-    avg_ms = (data.get("usage") or {}).get("average_duration_ms") or 0
-
-    L = [base]
-    L.append(kv("状态", f"{'有效' if valid else '无效'}  [{plan}]"))
-    L.append(kv("余额", f"{balance:.2f} {unit}" + (f"  剩 {remaining:.2f}" if remaining is not None else "")))
-    L.append(kv("今日", (
-        f"{today.get('requests') or 0}次 · "
-        f"{fmt_tokens(today.get('total_tokens'))} · "
-        f"花费 {float(today.get('actual_cost') or today.get('cost') or 0):.2f}"
-    )))
-    L.append(kv("累计", (
-        f"{total.get('requests') or 0}次 · "
-        f"{fmt_tokens(total.get('total_tokens'))} · "
-        f"花费 {float(total.get('actual_cost') or total.get('cost') or 0):.2f}"
-    )))
-    if avg_ms:
-        L.append(kv("延迟", f"均 {float(avg_ms) / 1000:.1f}s"))
-    return "\n".join(L)
-
-
 def build_report(base, profile, stats, daily, key_rows):
     """精简日报：余额 + 今日核心用量 + 模型摘要。"""
     email = profile.get("email") or f"uid:{profile.get('id')}"
@@ -430,31 +390,11 @@ def main():
         print(f"\n➡️ 检查站点 {idx}: {base}")
         session = make_session()
 
-        # API Key：官方用量接口 GET /v1/usage（不过期，推荐）
-        if is_api_key(token):
-            print("   （API Key 模式：GET /v1/usage）")
-            body = fetch_key_usage(session, base, token)
-            if "error" in body:
-                print(f"❌ 获取用量失败: {body['error']}")
-                reports.append(f"{base}\n状态｜❌ {body['error']}")
-                continue
-            today = (body.get("usage") or {}).get("today") or {}
-            print(
-                f"✅ 今日 {today.get('requests') or 0} 次 · "
-                f"{fmt_tokens(today.get('total_tokens'))} · "
-                f"花费 {float(today.get('actual_cost') or today.get('cost') or 0):.2f} · "
-                f"余额 {body.get('balance')}"
-            )
-            reports.append(build_report_key(base, body))
-            continue
-
-        # JWT：控制台接口（约 1 天有效）
-        print("   （JWT 模式：控制台接口）")
+        # 控制台 JWT（约 1 天有效）。sk- API Key 的 /v1/usage 只统计该 Key 自身，不适合账号日报。
         profile_body = api_get(session, base, token, "/api/v1/user/profile")
         if "error" in profile_body:
             print(f"❌ 获取 profile 失败: {profile_body['error']}")
-            hint = "\n可改用 sk- API Key（推荐，不过期）：SUB2API_ACCOUNTS=url@sk-xxx"
-            reports.append(f"{base}\n状态｜❌ {profile_body['error']}{hint}")
+            reports.append(f"{base}\n状态｜❌ {profile_body['error']}")
             continue
 
         stats_body = api_get(session, base, token, "/api/v1/usage/stats")

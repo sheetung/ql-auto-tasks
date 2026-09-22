@@ -288,34 +288,34 @@ export HUAWEI_PROXY="http://127.0.0.1:7890"
 **环境变量**
 
 ```bash
-# url@凭证；多个用 & 分隔
-# 推荐 API Key（sk- 开头，不过期）：
-export SUB2API_ACCOUNTS="http://127.0.0.1:18080@sk-your_api_key"
-
-# 或 JWT（约 1 天过期，易失效）：
-# export SUB2API_ACCOUNTS="http://127.0.0.1:18080@eyJhbGciOi..."
+# url@JWT，多个用 & 分隔
+export SUB2API_ACCOUNTS="http://127.0.0.1:18080@eyJhbGciOi..."
+# 多站点：http://host1:port@token1&http://host2:port@token2
 ```
 
-- **`sk-` API Key** → 调官方用量接口 `GET /v1/usage`（余额 / 今日 / 累计）
-- **JWT** → 调控制台接口（更细，但约 1 天失效）
-
-**安全提示（务必遵守）**
-
-1. **API Key / JWT 都是密钥**，只放青龙环境变量，**不要写进仓库或聊天**
-2. Key 泄露可被用来调用模型烧余额；请定期轮换
-3. **建议 sub2api 仅部署在内网**；若必须公网访问，请加 HTTPS、强密码与 IP 白名单
-4. 青龙与 sub2api 同内网时，优先直连，避免经过第三方代理
+使用**控制台 JWT**（约 1 天过期，需定期更换）。  
+说明：`sk-` API Key 的 `/v1/usage` **只统计该 Key 自身额度**，看不到账号级用量，故不用作日报。
 
 请求头：`Authorization: Bearer <token>`
 
-**运行示例（API Key）**
+**安全提示（务必遵守）**
+
+1. **JWT / API Key 都是密钥**，只放青龙环境变量，**不要写进仓库或聊天**
+2. 密钥泄露可被用来调用模型烧余额；请定期轮换
+3. **务必设置额度限制**（配额 / 余额告警 / 限额），避免泄露后被刷爆
+4. **仅用作 API 请求**，不要把密钥用于其他场景或共用给不可信服务
+5. **建议 sub2api 仅部署在内网**；若必须公网访问，请加 HTTPS、强密码与 IP 白名单
+6. 青龙与 sub2api 同内网时，优先直连，避免经过第三方代理
+
+**运行示例（JWT）**
 
 ```text
 http://127.0.0.1:18080
-状态｜有效  [钱包余额]
-余额｜9866.57 USD  剩 9866.57
+账号｜user@example.com [active]
+余额｜9931.38
 今日｜431次 · 65.64M · 花费 67.62
-累计｜431次 · 65.64M · 花费 67.62
+延迟｜均 25.3s
+模型｜gpt-6-astra×250  codex-auto-review×181
 ```
 
 推送标题：`【autoTask】sub2api日报`。钉钉用 text 消息保换行。
