@@ -294,6 +294,18 @@ export SUB2API_ACCOUNTS="http://127.0.0.1:18080@rt_xxx"
 # 兼容：url@jwt 或 url@jwt@refresh_token
 ```
 
+**如何获取 refresh_token**
+
+1. 浏览器登录 Sub2API
+2. F12 打开开发者工具 → Console
+3. 执行：
+
+```js
+localStorage.getItem('refresh_token')
+```
+
+4. 复制返回的 `rt_...`，填入 `SUB2API_ACCOUNTS`（不要泄露、不要提交到仓库）
+
 **JWT 自动续期（推荐）**  
 执行时调用 `POST /api/v1/auth/refresh`，body：`{"refresh_token":"rt_xxx"}`，返回：
 
@@ -303,13 +315,11 @@ export SUB2API_ACCOUNTS="http://127.0.0.1:18080@rt_xxx"
 
 > 注意：服务端每次 refresh 都会**轮换** `refresh_token`。脚本会把最新 RT 写入 `sub2api_refresh_N.json`，下次优先读该文件，**无需每天改青龙变量**。环境变量里的 RT 只作首次/兜底。
 
-说明：`sk-` API Key 的 `/v1/usage` 只统计该 Key 自身额度，不作账号日报。
-
 请求头：`Authorization: Bearer <jwt>`
 
 **安全提示（务必遵守）**
 
-1. **JWT / API Key 都是密钥**，只放青龙环境变量，**不要写进仓库或聊天**
+1. **JWT / refresh_token 都是密钥**，只放青龙环境变量，**不要写进仓库或聊天**
 2. 密钥泄露可被用来调用模型烧余额；请定期轮换
 3. **务必设置额度限制**（配额 / 余额告警 / 限额），避免泄露后被刷爆
 4. **仅用作 API 请求**，不要把密钥用于其他场景或共用给不可信服务
