@@ -288,22 +288,22 @@ export HUAWEI_PROXY="http://127.0.0.1:7890"
 **环境变量**
 
 ```bash
-# url@jwt[@refresh_token]，多个用 & 分隔
-export SUB2API_ACCOUNTS="http://127.0.0.1:18080@eyJ旧JWT@refresh_token"
-# 无 refresh 时（需手动换 JWT 约 24h）：
-# export SUB2API_ACCOUNTS="http://127.0.0.1:18080@eyJ旧JWT"
+# 推荐：url@refresh_token（rt_ 开头，无需 JWT）
+export SUB2API_ACCOUNTS="http://127.0.0.1:18080@rt_xxx"
+
+# 兼容：url@jwt 或 url@jwt@refresh_token
 ```
 
 **JWT 自动续期（推荐）**  
-日报执行前会调用：
+执行时调用 `POST /api/v1/auth/refresh`，body：`{"refresh_token":"rt_xxx"}`，返回：
 
-```http
-POST /api/v1/auth/refresh
-{"refresh_token": "..."}
+```json
+{"data": {"access_token": "eyJ...", "refresh_token": "rt_新值", "expires_in": 86400}}
 ```
 
-拿到新 JWT 后再查用量；若接口轮换了 `refresh_token`，会保存到 `sub2api_refresh_N.json`，并提示更新青龙环境变量。  
-说明：`sk-` API Key 的 `/v1/usage` **只统计该 Key 自身额度**，不作账号日报。
+> 注意：服务端每次 refresh 都会**轮换** `refresh_token`。脚本会把最新 RT 写入 `sub2api_refresh_N.json`，下次优先读该文件，**无需每天改青龙变量**。环境变量里的 RT 只作首次/兜底。
+
+说明：`sk-` API Key 的 `/v1/usage` 只统计该 Key 自身额度，不作账号日报。
 
 请求头：`Authorization: Bearer <jwt>`
 

@@ -66,9 +66,9 @@ def make_session():
 
 
 def parse_accounts():
-    """SUB2API_ACCOUNTS="url@jwt[@refresh_token]&..."
-    - url@jwt          手动贴 JWT（约 24h）
-    - url@jwt@refresh  日报前自动 refresh_token 换新 JWT
+    """SUB2API_ACCOUNTS="url@凭证&..."
+    推荐: url@refresh_token   （rt_ 开头，无需 JWT，自动续期）
+    也支持: url@jwt  或  url@jwt@refresh_token
     """
     accounts = []
     multi = os.environ.get("SUB2API_ACCOUNTS") or os.environ.get("sub2api_accounts") or ""
@@ -86,8 +86,13 @@ def parse_accounts():
         url = url.strip().rstrip("/")
         token = token.strip()
         refresh = refresh.strip()
-        if url and token:
-            accounts.append((url, token, refresh))
+        # rt_ 开头：仅 refresh，无需预先 JWT
+        if token.startswith("rt_") and not refresh:
+            refresh = token
+            token = ""
+        if not url or (not token and not refresh):
+            continue
+        accounts.append((url, token, refresh))
     return accounts
 
 
@@ -445,26 +450,52 @@ def main():
         print(f"\n➡️ 检查站点 {idx}: {base}")
         session = make_session()
 
-        # 有 refresh_token 则先换新 JWT（约 24h 有效，青龙每日自动续）
+        # 有 refresh_token 则先换新 JWT（约 24h 有效；接口会轮换 refresh_token）
         if refresh:
-            print("   （使用 refresh_token 更新 JWT）")
-            rr = refresh_jwt(session, base, refresh)
+            # 优先使用上次轮换后保存的 RT，避免每天改青龙环境变量
+            state_path = os.path.join(STATE_DIR, f"sub2api_refresh_{idx}.json")
+            saved_rt = ""
+            if os.path.exists(state_path):
+                try:
+                    with open(state_path, "r", encoding="utf-8") as f:
+                        saved = json.load(f)
+                    if saved.get("base") == base and saved.get("refresh_token"):
+                        saved_rt = saved["refresh_token"]
+                except (OSError, ValueError, json.JSONDecodeError):
+                    saved_rt = ""
+            use_rt = saved_rt or refresh
+            if saved_rt:
+                print("   （使用本地保存的 refresh_token）")
+
+            print("   （refresh_token → 新 JWT）")
+            rr = refresh_jwt(session, base, use_rt)
+            if "error" in rr:
+                # 本地 RT 失效时回退环境变量里的
+                if saved_rt and use_rt == saved_rt and refresh != saved_rt:
+                    print("   本地 RT 失效，尝试环境变量…")
+                    rr = refresh_jwt(session, base, refresh)
             if "error" in rr:
                 print(f"❌ {rr['error']}")
                 reports.append(f"{base}\n状态｜❌ {rr['error']}")
                 continue
             token = rr["access_token"]
-            if rr.get("refresh_token") and rr["refresh_token"] != refresh:
-                # refresh_token 轮换：写回本地，避免下次失效
-                state_path = os.path.join(STATE_DIR, f"sub2api_refresh_{idx}.json")
+            new_rt = rr.get("refresh_token") or use_rt
+            if new_rt != use_rt or new_rt != refresh:
                 try:
                     with open(state_path, "w", encoding="utf-8") as f:
-                        json.dump({"base": base, "refresh_token": rr["refresh_token"]}, f)
-                    print(f"   refresh_token 已轮换并保存: {os.path.basename(state_path)}")
-                    print(f"   请更新青龙 SUB2API_ACCOUNTS 中的 refresh 部分为新值")
+                        json.dump({"base": base, "refresh_token": new_rt}, f, ensure_ascii=False, indent=2)
+                    print(f"   refresh_token 已保存到 {os.path.basename(state_path)}")
                 except OSError as e:
-                    print(f"⚠️ 保存新 refresh_token 失败: {e}")
+                    print(f"⚠️ 保存失败: {e}")
+                if new_rt != refresh:
+                    print("   可选：将青龙 SUB2API_ACCOUNTS 更新为最新 RT（不改也能靠本地文件续期）：")
+                    print(f"   {base}@{new_rt}")
             print("   JWT 已刷新")
+
+        if not token:
+            print("❌ 无可用 JWT")
+            reports.append(f"{base}\n状态｜❌ 无可用 JWT")
+            continue
 
         profile_body = api_get(session, base, token, "/api/v1/user/profile")
         if "error" in profile_body:
