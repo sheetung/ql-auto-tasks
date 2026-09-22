@@ -176,15 +176,18 @@ def fmt_tokens(n):
 
 
 def fetch_today_usage(session, base, token, day_start, day_end, max_pages=20):
-    """拉取当日用量明细并聚合。"""
+    """拉取当日用量明细并聚合。接口认 start_date/end_date（YYYY-MM-DD，闭区间）。"""
     items = []
     page = 1
+    start_date = day_start.date().isoformat()
+    # end_date 闭区间：同日查询用同一日期
+    end_date = (day_end - timedelta(days=1)).date().isoformat()
     while page <= max_pages:
         params = {
             "page": page,
             "page_size": 100,
-            "start_time": day_start.isoformat(),
-            "end_time": day_end.isoformat(),
+            "start_date": start_date,
+            "end_date": end_date,
         }
         body = api_get(session, base, token, "/api/v1/usage", params)
         if "error" in body:
