@@ -362,16 +362,6 @@ def build_report(base, profile, stats, daily, key_rows):
     else:
         L.append(kv("今日", "获取失败"))
 
-    # 有配额限制的 Key 才提醒，避免刷屏
-    limited = [
-        k for k in (key_rows or [])
-        if k.get("rate_limit_1d") or k.get("quota")
-    ]
-    if limited:
-        for k in limited[:2]:
-            if k.get("quota"):
-                L.append(kv("Key", f"{k['name']} 配额 {k.get('quota_used')}/{k.get('quota')}"))
-
     return "\n".join(L)
 
 
