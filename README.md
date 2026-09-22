@@ -288,26 +288,37 @@ export HUAWEI_PROXY="http://127.0.0.1:7890"
 **环境变量**
 
 ```bash
-# 必填：url@token，多个用 & 分隔
-export SUB2API_ACCOUNTS="http://127.0.0.1:18080@your_jwt_token"
-# 多站点示例：
-# export SUB2API_ACCOUNTS="http://host1:port@token1&http://host2:port@token2"
+# url@凭证；多个用 & 分隔
+# 推荐 API Key（sk- 开头，不过期）：
+export SUB2API_ACCOUNTS="http://127.0.0.1:18080@sk-your_api_key"
+
+# 或 JWT（约 1 天过期，易失效）：
+# export SUB2API_ACCOUNTS="http://127.0.0.1:18080@eyJhbGciOi..."
 ```
+
+- **`sk-` API Key** → 调官方用量接口 `GET /v1/usage`（余额 / 今日 / 累计）
+- **JWT** → 调控制台接口（更细，但约 1 天失效）
+
+**安全提示（务必遵守）**
+
+1. **API Key / JWT 都是密钥**，只放青龙环境变量，**不要写进仓库或聊天**
+2. Key 泄露可被用来调用模型烧余额；请定期轮换
+3. **建议 sub2api 仅部署在内网**；若必须公网访问，请加 HTTPS、强密码与 IP 白名单
+4. 青龙与 sub2api 同内网时，优先直连，避免经过第三方代理
 
 请求头：`Authorization: Bearer <token>`
 
-**运行示例**
+**运行示例（API Key）**
 
 ```text
 http://127.0.0.1:18080
-账号｜user@example.com [active]
-余额｜9931.38
+状态｜有效  [钱包余额]
+余额｜9866.57 USD  剩 9866.57
 今日｜431次 · 65.64M · 花费 67.62
-延迟｜均 25.3s
-模型｜gpt-6-astra×250  codex-auto-review×181
+累计｜431次 · 65.64M · 花费 67.62
 ```
 
-推送标题：`【autoTask】sub2api日报`。正文精简为余额 + 今日请求数/Token/花费 + 平均延迟 + Top2 模型；钉钉用 text 消息保换行。
+推送标题：`【autoTask】sub2api日报`。钉钉用 text 消息保换行。
 
 ---
 
