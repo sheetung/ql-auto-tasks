@@ -19,19 +19,33 @@ from datetime import datetime, timezone, timedelta
 import requests
 
 # 代理：CODEX_RESET_PROXY > AUTO_TASK_PROXY > 系统
-def _proxy():
-    for name in ("CODEX_RESET_PROXY", "AUTO_TASK_PROXY"):
+def resolve_proxy(*names, use_unified=True, use_system=True):
+    for name in names:
         v = os.environ.get(name) or os.environ.get(name.lower())
         if v:
             return v.strip()
-    for key in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
-        v = os.environ.get(key)
+    if use_unified:
+        v = os.environ.get("AUTO_TASK_PROXY") or os.environ.get("auto_task_proxy")
         if v:
             return v.strip()
+    if use_system:
+        for key in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
+            v = os.environ.get(key)
+            if v:
+                return v.strip()
     return ""
 
 
-_http_proxy = _proxy()
+def requests_proxies(proxy_url):
+    if not proxy_url:
+        return None
+    return {"http": proxy_url, "https": proxy_url}
+
+
+# 直连：显式置 None，避免 requests 回退到环境变量里的同一失效代理
+NO_PROXY = {"http": None, "https": None}
+
+codex_proxy = resolve_proxy("CODEX_RESET_PROXY")
 
 # 推送
 bark_push = os.environ.get("BARK_PUSH", "")
@@ -70,15 +84,26 @@ def fetch_json(url, params=None):
         "Accept": "application/json",
         "User-Agent": "autoTask-codex-reset-monitor/1.0",
     }
+    params = params or {}
+    proxies = requests_proxies(codex_proxy)
     try:
         resp = requests.get(
             url,
             headers=headers,
-            params=params or {},
+            params=params,
             timeout=30,
-            proxies={"http": _http_proxy, "https": _http_proxy} if _http_proxy else None,
+            proxies=proxies,
         )
-    except requests.RequestException as e:
+    except (requests.exceptions.ProxyError, requests.exceptions.ConnectTimeout) as e:
+        # 代理不可达（如局域网代理宕机/网络变更）时回退直连，避免监控任务整体失败
+        if not proxies:
+            return {"error": f"{type(e).__name__}: {e}"}
+        print(f"⚠️ 代理 {codex_proxy} 不可用，回退直连: {e}")
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=30, proxies=NO_PROXY)
+        except requests.exceptions.RequestException as e2:
+            return {"error": f"{type(e2).__name__}: {e2}"}
+    except requests.exceptions.RequestException as e:
         return {"error": f"{type(e).__name__}: {e}"}
     if resp.status_code == 304:
         return {"not_modified": True}
@@ -145,7 +170,8 @@ def send_bark(text):
         "group": bark_group,
     }
     try:
-        r = requests.post(bark_push, json=payload, timeout=10)
+        # 推送走直连，避免环境变量中的失效代理导致通知也发不出去
+        r = requests.post(bark_push, json=payload, timeout=10, proxies=NO_PROXY)
         r.raise_for_status()
         print("✅ Bark 推送成功")
     except Exception as e:
@@ -177,7 +203,8 @@ def send_dingtalk(text):
     else:
         url = f"https://oapi.dingtalk.com/robot/send?access_token={dingtalk_token}"
     try:
-        r = requests.post(url, json=data, timeout=10)
+        # 推送走直连，避免环境变量中的失效代理导致通知也发不出去
+        r = requests.post(url, json=data, timeout=10, proxies=NO_PROXY)
         r.raise_for_status()
         print("✅ 钉钉推送成功")
     except Exception as e:
