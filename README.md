@@ -348,7 +348,7 @@ http://127.0.0.1:18080
 |----|-----|
 | 文件 | `codex_reset_monitor.py` |
 | cron | `23 * * * *`（每小时 23 分） |
-| 代理 | 可走 `AUTO_TASK_PROXY` / 系统代理 |
+| 代理 | 可走 `AUTO_TASK_PROXY` / 系统代理，代理不可用时自动回退直连 |
 
 从 [codex-resets.com](https://codex-resets.com/zh-CN) 公开 API 拉取 OpenAI Codex 额度重置公告（跟踪 [@thsottiaux](https://x.com/thsottiaux) 推文），有新的**已记录重置**或**安排中的重置**时推送。
 
